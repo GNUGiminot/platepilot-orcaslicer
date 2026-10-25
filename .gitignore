@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+dist/
+*.whl
+.claude/
+
+# Local working files, not part of the published plugin
+bundle_shelf.py
+autoarrange/
+upstream-pr.md
+_trash-*/
