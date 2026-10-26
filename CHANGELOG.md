@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- Orca auto-arrange no longer fails with "No such file or directory" when the plugin data folder has a long path: the temporary STL files now have short names, so their paths stay under the Windows 260-character limit.
+- Parts arranged by Orca keep their own names in the project instead of the temporary file names (for example "001-part_name.stl").
+
 ## 0.4.0 — first public release
 
 - English and Russian UI. The language follows OrcaSlicer, or you can pick one in the settings.

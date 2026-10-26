@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.4.0"
+# version = "0.4.1"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -25,7 +25,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 MAX_ARCHIVES = 500
 MAX_STL_BYTES = 30 * 1024 * 1024
 MAX_TOTAL_STL_BYTES = 200 * 1024 * 1024
@@ -1448,15 +1448,29 @@ def _project_settings():
     return json.dumps(data, ensure_ascii=False, indent=4)
 
 
-def _replace_project_settings(path, settings):
-    """Swap the configuration the CLI embeds (flattened "PlatePilot machine/process"
-    presets) for the active Orca configuration, so opening keeps the selected presets."""
+def _finish_cli_project(path, settings, names=None):
+    """Prepare the 3MF the CLI exported for opening in Orca.
+
+    Swaps the configuration the CLI embeds (flattened "PlatePilot machine/process" presets)
+    for the active Orca configuration, so opening keeps the selected presets, and renames the
+    objects from the short input file names ("001.stl") back to the part names.
+    """
+    names = names or {}
+
+    def rename(match):
+        return match.group(1) + quoteattr(names.get(match.group(2), match.group(2)), {'"': "&quot;"})
+
     temp = path + ".tmp"
     with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED) as target:
         for info in source.infolist():
             if info.filename in ("Metadata/project_settings.config", "Metadata/slice_info.config"):
                 continue
-            target.writestr(info, source.read(info))
+            data = source.read(info)
+            if info.filename == "Metadata/model_settings.config" and names:
+                text = data.decode("utf-8")
+                text = re.sub(r'(<metadata key="name" value=)"([^"]*)"', rename, text)
+                data = text.encode("utf-8")
+            target.writestr(info, data)
         target.writestr("Metadata/project_settings.config", settings)
     os.replace(temp, path)
 
@@ -1709,15 +1723,17 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             raise ValueError(_t("err.no_bed"))
 
         storage = orca.host.plugin.storage()
-        run_dir = os.path.join(storage, "OrcaAutoArrange-" + time.strftime("%Y%m%d-%H%M%S"))
+        run_dir = os.path.join(storage, "arrange-" + time.strftime("%y%m%d-%H%M%S"))
         input_dir = os.path.join(run_dir, "input")
         os.makedirs(input_dir, exist_ok=False)
         try:
             blobs = self._read_stl_blobs(source, all_parts, [part["member"] for part in parts])
             inputs = []
-            used_names = set()
+            names = {}
             for index, part in enumerate(parts, 1):
-                inputs.append(self._write_native_input(input_dir, part, index, blobs[part["member"]], used_names))
+                path = self._write_native_input(input_dir, index, blobs[part["member"]])
+                inputs.append(path)
+                names[os.path.basename(path)] = part["name"]
             settings = _write_cli_settings(run_dir)
             project_settings = _project_settings()
             executable = _orca_executable()
@@ -1731,6 +1747,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             self._native_arrange_job = {
                 "process": process, "run_dir": run_dir, "input_dir": input_dir, "output": output,
                 "log": log_path, "count": len(inputs), "started": time.time(), "project_settings": project_settings,
+                "names": names,
             }
             self.post_message({"type": "native_arrange_started", "count": len(inputs)})
         except Exception:
@@ -1738,16 +1755,10 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             raise
 
     @staticmethod
-    def _write_native_input(input_dir, part, index, raw, used_names):
-        stem = re.sub(r"[^\w.-]+", "_", os.path.splitext(os.path.basename(part["name"]))[0]).strip("._-")
-        stem = stem[:64] or f"part-{index}"
-        base = stem
-        suffix = 2
-        while stem.casefold() in used_names:
-            stem = f"{base}-{suffix}"
-            suffix += 1
-        used_names.add(stem.casefold())
-        path = os.path.join(input_dir, f"{index:03d}-{stem}.stl")
+    def _write_native_input(input_dir, index, raw):
+        # Short file names keep the path under Windows' 260-character limit even when the
+        # plugin data folder is deep; the real part names are put back by _finish_cli_project().
+        path = os.path.join(input_dir, f"{index:03d}.stl")
         with open(path, "wb") as stream:
             stream.write(raw)
         return path
@@ -1769,7 +1780,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     detail = stream.read()[-800:].strip()
                 raise RuntimeError(_t("err.cli_failed", detail=detail or _t("err.cli_exit", code=code)))
             shutil.rmtree(job["input_dir"], ignore_errors=True)
-            _replace_project_settings(job["output"], job["project_settings"])
+            _finish_cli_project(job["output"], job["project_settings"], job["names"])
             plate_count = _count_plates(job["output"])
             _open_project(job["output"])
             message = _t("msg.arranged", parts=_plural("plan.parts", job["count"]), plates=_plural("plan.plates", max(1, plate_count)))

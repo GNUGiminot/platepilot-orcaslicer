@@ -177,10 +177,30 @@ class ProjectFile(unittest.TestCase):
                 archive.writestr("3D/3dmodel.model", "<model/>")
                 archive.writestr("Metadata/project_settings.config", '{"printer_settings_id": "PlatePilot machine"}')
                 archive.writestr("Metadata/slice_info.config", "<config/>")
-            pp._replace_project_settings(path, '{"printer_settings_id": "Real printer"}')
+            pp._finish_cli_project(path, '{"printer_settings_id": "Real printer"}')
             with zipfile.ZipFile(path) as archive:
                 self.assertEqual(sorted(archive.namelist()), ["3D/3dmodel.model", "Metadata/project_settings.config"])
                 self.assertIn("Real printer", archive.read("Metadata/project_settings.config").decode())
+
+    def test_cli_objects_get_their_part_names_back(self):
+        config = ('<config><object id="2"><metadata key="name" value="001.stl"/>'
+                  '<part id="1" subtype="normal_part"><metadata key="name" value="001.stl"/></part></object>'
+                  '<object id="4"><metadata key="name" value="002.stl"/></object></config>')
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "cli.3mf")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("Metadata/model_settings.config", config)
+            pp._finish_cli_project(path, "{}", {"001.stl": 'left wall "A" & B.stl', "002.stl": "деталь 2.stl"})
+            with zipfile.ZipFile(path) as archive:
+                text = archive.read("Metadata/model_settings.config").decode()
+        self.assertEqual(text.count("left wall &quot;A&quot; &amp; B.stl"), 2)
+        self.assertIn('value="деталь 2.stl"', text)
+        self.assertNotIn("001.stl", text)
+
+    def test_cli_input_paths_stay_short(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = pp.PlatePilotPage._write_native_input(folder, 9, b"solid")
+        self.assertEqual(os.path.basename(path), "009.stl")
 
 
 if __name__ == "__main__":
