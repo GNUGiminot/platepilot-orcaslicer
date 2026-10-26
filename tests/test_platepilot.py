@@ -413,7 +413,7 @@ class OrcaPathCheck(unittest.TestCase):
             write_tree(root, {"kept/a.stl": box_stl(5, 5, 5), "hidden/b.stl": box_stl(5, 5, 5)})
             with zipfile.ZipFile(os.path.join(root, "part_stls.zip"), "w") as archive:
                 archive.writestr("p.stl", box_stl(5, 5, 5))
-            old = {"folders": [root + "\\"], "folder_grants": [root], "hidden": {os.path.join(root, "hidden"): ""},
+            old = {"folders": [root + os.sep], "folder_grants": [root], "hidden": {os.path.join(root, "hidden"): ""},
                    "auto_refresh": True, "poll_seconds": 60, "recursive": True, "batch_size": 10, "margin_mm": 3.0,
                    "model_types": ["stl", "step", "3mf"], "arrange_mode": "orca", "language": "ru"}
             page = FakePage(storage)
