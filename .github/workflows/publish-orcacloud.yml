@@ -2,11 +2,17 @@
 # Based on the workflow in the Orca Cloud help guide (https://cloud.orcaslicer.com/wiki/).
 # It runs only once the repository is connected to the plugin in Orca Cloud
 # (Edit plugin > GitHub publishing) and the repository variable ORCACLOUD_PUBLISH is "true".
+# A release whose upload failed can be published again with "Run workflow" and its tag.
 name: Publish to OrcaCloud
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing release to publish again, for example v0.5.0"
+        required: true
 
 permissions:
   id-token: write
@@ -15,44 +21,52 @@ permissions:
 env:
   # Space-separated globs matching the plugin files to upload (.whl / .py).
   PLUGIN_FILES: "dist/platepilot_any.whl"
+  # The release tag: the published release, or the one given to "Run workflow".
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Build the wheel
         run: |
           python3 build_wheel.py
-          tag_version="${GITHUB_REF_NAME#v}"
+          tag_version="${TAG#v}"
           source_version="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' platepilot.py)"
           if [ "$tag_version" != "$source_version" ]; then
-            echo "Release tag $GITHUB_REF_NAME does not match VERSION $source_version in platepilot.py" >&2
+            echo "Release tag $TAG does not match VERSION $source_version in platepilot.py" >&2
             exit 1
           fi
 
       - name: Attach the wheel to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/platepilot-*-py3-none-any.whl --clobber
+        run: gh release upload "$TAG" dist/platepilot-*-py3-none-any.whl --clobber
 
       - name: Publish release to OrcaCloud
         if: vars.ORCACLOUD_PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           oidc_token="$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=orcacloud" | jq -r .value)"
-          version="${GITHUB_REF_NAME#v}"
-          changelog="$(jq -r '.release.body // ""' "$GITHUB_EVENT_PATH" | head -c 4000)"
+          version="${TAG#v}"
+          changelog="$(gh release view "$TAG" --json body -q .body | head -c 4000)"
           metadata="$(jq -cn --arg version "$version" --arg changelog "$changelog" \
             '{version: $version} + (if $changelog == "" then {} else {changelog: $changelog} end)')"
-          args=(-F "metadata=$metadata")
+          # --form-string sends the value as it is: with -F, curl would read a ";" in the
+          # changelog as the start of its own field options and cut the JSON there.
+          args=(--form-string "metadata=$metadata")
           shopt -s nullglob
           for file in $PLUGIN_FILES; do
             args+=(-F "files=@$file")
           done
-          if [ "${#args[@]}" -eq 1 ]; then
+          if [ "${#args[@]}" -eq 2 ]; then
             echo "No plugin files matched: $PLUGIN_FILES" >&2
             exit 1
           fi
