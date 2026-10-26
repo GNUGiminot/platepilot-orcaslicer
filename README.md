@@ -8,7 +8,10 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 
 ## Features
 
-- **Model library.** Watches folders, finds ZIP archives and unpacked folders with STL, STEP and 3MF files, and keeps the list up to date. Search, filter by type, hide sources you don't need (the files stay on disk).
+- **Model library.** Watches folders, finds ZIP archives and unpacked folders with STL, STEP and 3MF files, and marks what is new since the last check. Each folder shows a short summary: how many sources, how many are new, when it was checked. Search, filter by type, hide sources you don't need (the files stay on disk).
+- **Drag and drop, or Add files.** Drop ZIP, STL, STEP or 3MF files or a whole folder onto PlatePilot, paste them with Ctrl+V, or pick them with **Add files**. They are copied into PlatePilot's own folder and opened right away. Any file name works, and Orca does not ask for permission.
+- **A tidy list.** Archives that were never opened are judged by their names. Model downloads are listed up front; programs, drivers and archives with unclear names wait in a collapsed group at the bottom, and search still finds them.
+- **Parts longer than the bed side** are turned diagonally when that makes them fit, in both arrange modes.
 - **3D preview on your bed.** A shaded preview of any STL on the bed of the printer selected in Orca.
 - **Two ways to arrange:**
   - **PlatePilot layout:** packs parts by their footprint (MaxRects, six orderings, 90° rotation) with an even gap, and shows each plate with its fill percentage before you send it.
@@ -38,9 +41,9 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 
 ## Use
 
-1. Open the **PlatePilot** tab and click **Folders**.
-2. Click **Choose folder…** or paste a folder path. Paths in quotes, as Windows Explorer's "Copy as path" makes them, are fine.
-3. Click **Refresh**, pick an archive or folder, and click a part to preview it.
+1. Open the **PlatePilot** tab and drop a ZIP or STL files onto it. Or click **Folders** and add a folder to watch: click **Choose folder…** or paste a folder path. Paths in quotes, as Windows Explorer's "Copy as path" makes them, are fine.
+2. The folders are checked when PlatePilot opens and when you come back to the tab. **Refresh** checks them right away. Nothing runs in the background.
+3. Pick an archive or folder, and click a part to preview it.
 4. Tick the parts you want and pick a mode:
    - **PlatePilot layout:** set the gap, click **Calculate**, check the plates, then click **Open in Prepare**.
    - **Orca auto-arrange:** click **Arrange in Orca**.
@@ -52,7 +55,11 @@ Slice again before printing, and check Orca's warnings for parts outside a plate
 
 PlatePilot works only with local files. It does not use the network.
 
-- It reads the folders you add and the archives inside them. OrcaSlicer's plugin audit may ask you once for access to these files. PlatePilot does not bypass these prompts.
+- OrcaSlicer asks before a plugin reads a file outside the plugin's own data folder, separately for every path. PlatePilot does not bypass these prompts, and it is built so that there are few of them:
+  - Checking a watched folder only lists file names and sizes. Orca asks once per folder, the first time.
+  - An archive is read only when you open it. Orca asks once per archive.
+  - When you open a model folder, PlatePilot copies its STL files into its data folder in one step. Orca asks once per folder (it calls this "read/write": PlatePilot reads your folder and writes the copy).
+  - Files you drop or paste into PlatePilot are copied into its data folder, which needs no permission. **Delete** removes only that copy.
 - It writes projects only to its own plugin data folder.
 - **Orca auto-arrange** starts Orca's command-line mode (`orca-slicer --arrange 1 --export-3mf`). Orca asks for permission before it runs.
 
@@ -87,7 +94,10 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Возможности
 
-- **Библиотека моделей.** Следит за папками, находит ZIP-архивы и распакованные папки с STL, STEP и 3MF и держит список актуальным. Поиск, фильтр по типу, скрытие ненужных источников (файлы остаются на диске).
+- **Библиотека моделей.** Следит за папками, находит ZIP-архивы и распакованные папки с STL, STEP и 3MF и отмечает новое с прошлой проверки. У каждой папки — короткая сводка: сколько источников, сколько новых, когда проверялась. Поиск, фильтр по типу, скрытие ненужных источников (файлы остаются на диске).
+- **Перетаскивание и «Добавить файлы».** Перетащите на PlatePilot файлы ZIP, STL, STEP, 3MF или целую папку, вставьте их через Ctrl+V или выберите кнопкой **«Добавить файлы»**. Они копируются в собственную папку PlatePilot и сразу открываются. Имена файлов могут быть любыми, Orca не спрашивает разрешения.
+- **Аккуратный список.** Архивы, которые ещё не открывались, оцениваются по названию. Загрузки моделей идут в начале списка, а программы, драйверы и архивы с непонятными названиями свёрнуты в группу внизу; поиск находит и их.
+- **Детали длиннее стороны стола** поворачиваются по диагонали, если так они помещаются, в обоих режимах раскладки.
 - **3D-просмотр на вашем столе.** Затенённый предпросмотр любой STL на столе принтера, выбранного в Orca.
 - **Два способа раскладки:**
   - **Раскладка PlatePilot:** укладывает детали по габаритам (MaxRects, шесть порядков, поворот на 90°) с равным зазором и показывает каждый стол с процентом заполнения.
@@ -108,9 +118,9 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Как пользоваться
 
-1. Откройте вкладку **PlatePilot** и нажмите **«Папки»**.
-2. Нажмите **«Выбрать папку…»** или вставьте путь. Путь в кавычках, как из «Копировать как путь» в Проводнике, тоже подойдёт.
-3. Нажмите **«Обновить»**, выберите архив или папку, щёлкните деталь для предпросмотра.
+1. Откройте вкладку **PlatePilot** и перетащите на неё ZIP или STL. Либо нажмите **«Папки»** и добавьте папку для отслеживания: **«Выбрать папку…»** или вставьте путь. Путь в кавычках, как из «Копировать как путь» в Проводнике, тоже подойдёт.
+2. Папки проверяются при открытии PlatePilot и при возврате на вкладку, **«Обновить»** проверяет их сразу. В фоне ничего не работает.
+3. Выберите архив или папку, щёлкните деталь для предпросмотра.
 4. Отметьте нужные детали и выберите режим:
    - **Раскладка PlatePilot:** задайте зазор, нажмите **«Рассчитать»**, проверьте столы и нажмите **«В «Подготовку»»**.
    - **Авторасстановка Orca:** нажмите **«Расставить в Orca»**.
@@ -120,7 +130,14 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Доступ и приватность
 
-PlatePilot работает только с локальными файлами и не обращается к сети. Он читает добавленные папки и архивы в них (аудит плагинов Orca может один раз спросить разрешение) и пишет проекты только в свою папку данных. Режим «Авторасстановка Orca» запускает Orca в режиме командной строки, Orca спросит разрешение.
+PlatePilot работает только с локальными файлами и не обращается к сети. Orca спрашивает разрешение, прежде чем плагин прочитает файл вне своей папки данных, — отдельно для каждого пути. PlatePilot эти запросы не обходит, но устроен так, чтобы их было мало:
+
+- Проверка отслеживаемой папки только перечисляет имена и размеры файлов — Orca спросит один раз на папку.
+- Архив читается, только когда вы его открываете, — один запрос на архив.
+- При открытии папки с моделями PlatePilot за один шаг копирует её STL в свою папку данных — один запрос на папку (Orca называет это «чтение/запись»: PlatePilot читает вашу папку и записывает копию).
+- Перетащенные или вставленные файлы копируются в папку данных PlatePilot, разрешения для этого не нужны. **«Удалить»** удаляет только эту копию.
+
+Проекты PlatePilot пишет только в свою папку данных. Режим «Авторасстановка Orca» запускает Orca в режиме командной строки, Orca спросит разрешение.
 
 ## Лицензия
 

@@ -4,12 +4,13 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.4.1"
+# version = "0.5.0"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
 
 import base64
+import hashlib
 import json
 import math
 import os
@@ -25,7 +26,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 MAX_ARCHIVES = 500
 MAX_STL_BYTES = 30 * 1024 * 1024
 MAX_TOTAL_STL_BYTES = 200 * 1024 * 1024
@@ -34,8 +35,20 @@ MAX_PROJECT_FACETS = 600000
 MAX_NATIVE_PARTS = 200
 DEFAULT_MARGIN_MM = 4.0
 MAX_SCAN_DIRECTORIES = 20000
-SCAN_DIRECTORIES_PER_TICK = 12
-SCAN_ARCHIVES_PER_TICK = 2
+MAX_IMPORT_BYTES = 500 * 1024 * 1024
+FOLDER_CACHE_KEEP = 4
+# Orca keeps the plugin's data folder under its own data folder; past ~240 characters a path
+# no longer fits Windows' 260-character limit once Orca adds its own suffixes.
+MAX_IMPORT_PATH = 240
+IMPORT_EXTENSIONS = {".zip", ".stl", ".step", ".stp", ".3mf"}
+# Orca refuses any path with one of these components (PluginAuditManager.cpp,
+# default_denied_path_keywords), so names of dropped files are adjusted to avoid them.
+DENIED_PATH_NAMES = {"secret", "secrets", "cert", "certs", "certificate", "certificates", "conf", "config"}
+WINDOWS_RESERVED_NAMES = {"con", "prn", "aux", "nul"} | {f"{p}{n}" for p in ("com", "lpt") for n in range(1, 10)}
+CYRILLIC_LATIN = dict(zip(
+    "абвгдеёжзийклмнопрстуфхцчшщъыьэюяіїєґў",
+    ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f",
+     "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya", "i", "yi", "ye", "g", "u"]))
 MODEL_EXTENSIONS = {".stl": "stl", ".step": "step", ".stp": "step", ".3mf": "3mf"}
 MODEL_TYPE_LABELS = {"stl": "STL", "step": "STEP", "3mf": "3MF"}
 # Orca lays plates out in a grid with a gap of 1/5 of the plate size (PartPlate.cpp,
@@ -48,9 +61,8 @@ CLI_SKIP_KEYS = {
     "compatible_prints_condition", "print_settings_id", "printer_settings_id", "filament_settings_id",
 }
 DEFAULT_CONFIG = {
-    "folders": [], "folder_grants": [], "hidden": {},
-    "auto_refresh": False, "poll_seconds": 30, "recursive": True,
-    "batch_size": 10, "margin_mm": DEFAULT_MARGIN_MM,
+    "folders": [], "hidden": {}, "check_on_open": True, "recursive": True,
+    "margin_mm": DEFAULT_MARGIN_MM,
     "model_types": ["stl", "step", "3mf"], "arrange_mode": "own", "language": "auto",
 }
 LANGUAGES = ("en", "ru")
@@ -63,6 +75,8 @@ STRINGS = {
     "app.loading_profile": ("Loading the printer profile…", "Загружаю профиль принтера…"),
     "btn.refresh": ("Refresh", "Обновить"),
     "btn.folders": ("Folders", "Папки"),
+    "btn.add_files": ("Add files", "Добавить файлы"),
+    "btn.add_files_tip": ("Add ZIP, STL, STEP or 3MF files. They are copied into PlatePilot, so Orca does not ask for permission.", "Добавить файлы ZIP, STL, STEP или 3MF. Они копируются в PlatePilot, поэтому Orca не спрашивает разрешения."),
     "lib.title": ("Library", "Библиотека"),
     "lib.search": ("Search by name", "Поиск по названию"),
     "lib.all": ("All", "Все"),
@@ -87,7 +101,8 @@ STRINGS = {
     "drawer.title": ("Sources and refresh", "Источники и обновление"),
     "drawer.close": ("Close", "Закрыть"),
     "drawer.folders": ("Watched folders", "Отслеживаемые папки"),
-    "drawer.folders_note": ("PlatePilot looks for ZIP archives and unpacked model folders in them.", "PlatePilot ищет в них ZIP-архивы и распакованные каталоги с моделями."),
+    "drawer.folders_note": ("PlatePilot finds ZIP archives and folders with model files in them by their names. A file is read only when you open it.",
+                            "PlatePilot находит в них ZIP-архивы и папки с моделями по именам файлов. Сам файл читается, только когда вы его открываете."),
     "drawer.pick": ("Choose folder…", "Выбрать папку…"),
     "drawer.paste": ("Or paste a folder path (quotes are fine, as from \"Copy as path\"):", "Или вставьте путь вручную (можно с кавычками, как из «Копировать как путь»):"),
     "drawer.paste_only": ("Paste the full path of a folder with models:", "Вставьте полный путь к папке с моделями:"),
@@ -97,23 +112,25 @@ STRINGS = {
     "drawer.formats_note": ("Sources without the selected formats are hidden. Preview and layout work with STL.", "Источники без выбранных форматов скрываются. Просмотр и раскладка доступны для STL."),
     "drawer.scan": ("Scanning", "Сканирование"),
     "drawer.recursive": ("Search subfolders", "Искать в подпапках"),
-    "drawer.auto": ("Check folders automatically", "Проверять папки автоматически"),
-    "drawer.interval": ("Check interval, s", "Интервал проверки, сек"),
-    "drawer.batch": ("Ask after every N new ZIP files", "Спрашивать после каждых N новых ZIP"),
-    "drawer.audit_note": ("Orca may ask separately for access to files. That is Orca's own protection, and the plugin does not bypass it.",
-                          "Orca может отдельно запросить доступ к файлам — это защита самой Orca, плагин её не обходит."),
+    "drawer.check_on_open": ("Check folders when PlatePilot opens", "Проверять папки при открытии PlatePilot"),
+    "drawer.audit_note": ("Orca asks once before PlatePilot looks into a watched folder, and once for each archive or model folder you open. Files you drop into PlatePilot need no permission.",
+                          "Orca один раз спросит разрешение на просмотр отслеживаемой папки и по одному разу — на каждый архив или папку с моделями, которые вы откроете. Файлам, перетащенным в PlatePilot, разрешения не нужны."),
     "drawer.language": ("Language", "Язык"),
     "drawer.lang_auto": ("Same as Orca", "Как в Orca"),
     "modal.confirm": ("Confirm", "Подтверждение"),
     "modal.cancel": ("Cancel", "Отмена"),
     "modal.continue": ("Continue", "Продолжить"),
     # page: dynamic text
-    "st.choose_folder": ("Open Folders and choose a folder with models.", "Откройте «Папки» и выберите папку с моделями."),
+    "st.choose_folder": ("Drop ZIP or STL files here, or open Folders and choose a folder with models.", "Перетащите сюда ZIP или STL либо откройте «Папки» и выберите папку с моделями."),
     "st.press_refresh": ("Press Refresh to scan the folders.", "Нажмите «Обновить», чтобы просканировать папки."),
     "st.scanning": ("Scanning folders…", "Сканирую папки…"),
-    "st.scanning_n": ("Scanning folders… found {n}", "Сканирую папки… найдено {n}"),
-    "st.scanned": ("Folders checked · sources: {n}", "Папки проверены · источников: {n}"),
-    "st.opening_picker": ("Opening the folder picker…", "Открываю выбор папки…"),
+    "st.scanned": ("Folders checked · {sources}", "Папки проверены · {sources}"),
+    "st.scanned_new": ("Folders checked · {sources} · {n} new", "Папки проверены · {sources} · новых: {n}"),
+    "st.importing": ("Adding {name} · {i} of {n} · {pct}%", "Добавляю {name} · {i} из {n} · {pct}%"),
+    "st.import_none": ("Nothing to add: drop ZIP, STL, STEP or 3MF files or a folder with them.", "Добавлять нечего: перетащите ZIP, STL, STEP, 3MF или папку с ними."),
+    "st.import_skipped": (" Other files skipped: {n}.", " Другие файлы пропущены: {n}."),
+    "st.opening": ("Opening…", "Открываю…"),
+    "st.opening_picker":("Opening the folder picker…", "Открываю выбор папки…"),
     "st.opened_source": ("Opened \"{name}\".", "Открыт источник «{name}»."),
     "st.plan_ready": ("The layout is ready. Open it in Prepare.", "Раскладка готова — отправьте её в «Подготовку»."),
     "st.plan_problems": ("Some parts do not fit on the bed. Change the selection.", "Есть детали, которые не помещаются на стол; исправьте выбор."),
@@ -130,12 +147,31 @@ STRINGS = {
     "printer.zones_tip": ("The printer profile has excluded bed areas. Check the layout in Orca.", "В профиле есть исключённые зоны стола — проверьте раскладку в Orca."),
     "lib.nothing_found": ("Nothing matches the filter.", "Ничего не найдено по фильтру."),
     "lib.press_refresh": ("Press Refresh to find models in the folders.", "Нажмите «Обновить», чтобы найти модели в папках."),
-    "lib.add_folder": ("Add a folder with models under Folders.", "Добавьте папку с моделями в настройках «Папки»."),
+    "lib.add_folder": ("Drop ZIP or STL files here, or add a folder with models under Folders.", "Перетащите сюда ZIP или STL либо добавьте папку с моделями в «Папках»."),
+    "lib.new": ("New", "Новые"),
+    "lib.added": ("Added", "Добавленные"),
+    "lib.other_show": ("{n} more archives whose names don't look like models", "Ещё архивов, не похожих на модели по названию: {n}"),
+    "lib.other_hide": ("Hide the archives whose names don't look like models", "Скрыть архивы, не похожие на модели"),
+    "lib.other_note": ("PlatePilot judges by the name, because looking inside every archive would make Orca ask about each one. Open an archive to check it: with models it moves up, without them it disappears. Search looks through these too.",
+                       "PlatePilot судит по названию: чтобы заглянуть в каждый архив, Orca спрашивала бы разрешение на каждый. Откройте архив, чтобы проверить: с моделями он поднимется в список, без них исчезнет. Поиск находит и эти архивы."),
+    "lib.mark_seen": ("Mark all as seen", "Отметить все как просмотренные"),
+    "lib.no_new": ("No new sources since the last check.", "Новых источников с прошлой проверки нет."),
+    "drop.title": ("Drop to add to PlatePilot", "Отпустите, чтобы добавить в PlatePilot"),
+    "drop.note": ("ZIP, STL, STEP, 3MF or a folder with them. The files are copied into PlatePilot's own folder, so Orca does not ask for permission. To watch a folder instead, add it under Folders or paste its path with Ctrl+V.",
+                  "ZIP, STL, STEP, 3MF или папка с ними. Файлы копируются в собственную папку PlatePilot, поэтому Orca не спрашивает разрешения. Чтобы отслеживать папку, добавьте её в «Папках» или вставьте её путь через Ctrl+V."),
     "src.choose": ("Choose a source", "Выберите источник"),
     "src.choose_note": ("Pick an archive or folder in the library. PlatePilot shows its parts and a preview on the bed.", "Архив или папку из библиотеки слева — PlatePilot покажет её детали и предпросмотр на столе."),
     "src.summary": ("{n} model files · {stl} STL · {path}", "{n} файлов моделей · {stl} STL · {path}"),
     "src.hide": ("Hide", "Скрыть"),
     "src.hide_tip": ("Hide from the list. The file stays on disk.", "Скрыть из списка, файл на диске останется"),
+    "src.new": ("new", "новый"),
+    "src.added": ("added", "добавлен"),
+    "src.unopened": ("not opened yet", "ещё не открывался"),
+    "src.delete": ("Delete", "Удалить"),
+    "src.delete_tip": ("Delete the copy added to PlatePilot", "Удалить копию, добавленную в PlatePilot"),
+    "delete.title": ("Delete from PlatePilot?", "Удалить из PlatePilot?"),
+    "delete.body": ("The copy of \"{name}\" in PlatePilot's folder is deleted. The files you dropped or pasted from are not touched.",
+                    "Копия «{name}» в папке PlatePilot будет удалена. Файлы, из которых она добавлена, не затрагиваются."),
     "parts.meta": ("{dims} mm · {facets} facets", "{dims} мм · {facets} граней"),
     "parts.catalog_only": ("{type} · catalog only", "{type} · только в каталоге"),
     "parts.no_files": ("The source has no files of the selected formats.", "В источнике нет файлов выбранных форматов."),
@@ -149,17 +185,21 @@ STRINGS = {
     "plan.zones": ("check excluded areas in Orca", "проверьте исключённые зоны в Orca"),
     "plan.plate": ("Plate {n}", "Стол {n}"),
     "plan.plate_meta": ("{parts} · {fill}%", "{parts} · {fill}%"),
-    "plan.rotated": (" · rotated 90°", " · повёрнута на 90°"),
+    "plan.rotated": (" · rotated {n}°", " · повёрнута на {n}°"),
     "folders.none": ("No folders yet.", "Папки ещё не добавлены."),
     "folders.remove": ("Stop watching", "Перестать отслеживать"),
-    "consent.title": ("Watch this folder?", "Отслеживать эту папку?"),
-    "consent.body": ("PlatePilot will list the files in this folder and read ZIP, STL, STEP and 3MF files for the library:\n{path}\n\nOrca may also ask for file access separately.",
-                     "PlatePilot будет просматривать файлы в этой папке и читать ZIP, STL, STEP и 3MF для каталога:\n{path}\n\nOrca также может отдельно спросить доступ к файлам."),
-    "consent.body_recursive": ("PlatePilot will list the files in this folder and its subfolders and read ZIP, STL, STEP and 3MF files for the library:\n{path}\n\nOrca may also ask for file access separately.",
-                               "PlatePilot будет просматривать файлы в этой папке и её подпапках и читать ZIP, STL, STEP и 3MF для каталога:\n{path}\n\nOrca также может отдельно спросить доступ к файлам."),
-    "consent.yes": ("Watch", "Отслеживать"),
-    "batch.title": ("Continue scanning?", "Продолжить сканирование?"),
-    "batch.body": ("{n} new archives read. Read the next batch?", "Прочитано {n} новых архивов. Читать следующую партию?"),
+    "folders.sources": ("{n} source|{n} sources", "{n} источник|{n} источника|{n} источников"),
+    "folders.stats": ("{sources} · checked {time}", "{sources} · проверено {time}"),
+    "folders.new": ("{n} new", "новых: {n}"),
+    "folders.other": ("{n} archives that don't look like models", "не похожих на модели архивов: {n}"),
+    "folders.empty": ("{n} without models hidden", "без моделей скрыто: {n}"),
+    "folders.never": ("Not checked yet", "Ещё не проверялась"),
+    "folders.missing": ("Folder not found", "Папка не найдена"),
+    "folders.skipped": ("{n} subfolders skipped: Orca cannot open them for plugins", "пропущено подпапок: {n} — Orca не даёт плагинам их открыть"),
+    "folders.unreadable": ("Orca cannot open this folder for plugins: its path has non-Latin letters or a folder named config, cert or secret", "Orca не даёт плагинам открыть эту папку: в пути есть нелатинские буквы или папка с именем config, cert или secret"),
+    "folders.truncated":("only the first {n} are shown", "показаны первые {n}"),
+    "folders.added": ("Added to PlatePilot", "Добавлено в PlatePilot"),
+    "folders.added_note": ("Files you drop or paste are copied here.", "Сюда копируются файлы, которые вы перетаскиваете или вставляете."),
     # plugin messages and errors
     "err.path_empty": ("enter a folder path", "укажи путь к папке"),
     "err.path_relative": ("enter the full folder path, for example {example}", "укажи полный путь к папке, например {example}"),
@@ -180,7 +220,13 @@ STRINGS = {
     "err.archive_outside": ("the archive must be inside a watched folder", "архив должен находиться в выбранной папке"),
     "err.folder_outside": ("the model folder must be inside a watched folder", "папка модели должна находиться внутри отслеживаемой папки"),
     "warn.stl_only": ("{type}: preview and layout work with STL only", "{type}: просмотр и раскладка доступны только для STL"),
-    "warn.too_big": ("file larger than 30 MB", "файл больше 30 MB"),
+    "warn.unsafe_name": ("name with non-Latin letters: Orca cannot open it for plugins yet, drag it into PlatePilot", "имя с нелатинскими буквами: Orca пока не даёт плагинам открыть его — перетащите в PlatePilot"),
+    "err.unsafe_path": ("{path}: Orca 2.5 cannot open paths with non-Latin letters, or with a folder named config, cert or secret, for plugins yet. Drag the files into PlatePilot or rename the folder.",
+                        "{path}: Orca 2.5 пока не даёт плагинам открывать пути с нелатинскими буквами или с папкой config, cert, secret. Перетащите файлы в PlatePilot или переименуйте папку."),
+    "st.no_answer": ("The plugin did not answer. Press Refresh to try again.", "Плагин не ответил. Нажмите «Обновить», чтобы попробовать ещё раз."),
+    "st.scan_interrupted": ("The last folder check did not finish (Orca was closed), so it was not repeated automatically. Press Refresh to check the folders.",
+                            "Прошлая проверка папок не завершилась (Orca закрылась), поэтому автоматически она не повторялась. Нажмите «Обновить», чтобы проверить папки."),
+    "warn.too_big":("file larger than 30 MB", "файл больше 30 MB"),
     "err.total_archive": ("the STL files in the archive exceed 200 MB in total", "суммарный размер STL в архиве превышает 200 MB"),
     "err.total_folder": ("the STL files in the folder exceed 200 MB in total", "суммарный размер STL в папке превышает 200 MB"),
     "warn.empty_model": ("empty model", "пустая модель"),
@@ -213,10 +259,22 @@ STRINGS = {
     "err.cli_exit": ("Exit code: {code}", "Код завершения: {code}"),
     "msg.arranged": ("Orca arranged {parts} on {plates} and is opening the project. If Prepare already has models, choose \"Open as project\" to keep the plates.",
                      "Orca расставила {parts} на {plates} и открывает проект. Если в «Подготовке» уже есть модели, выберите «Открыть как проект», чтобы сохранить столы."),
+    "msg.arranged_partly": ("Orca could not place {n} of {parts} on the plates, even turned: they are left beside the plates. Check their size against the bed, or use PlatePilot layout to see which ones.",
+                            "Orca не смогла поставить на столы {n} из {parts} даже с поворотом — они лежат рядом со столами. Проверьте их размер относительно стола или посмотрите в «Раскладке PlatePilot», какие именно."),
     "err.arrange_failed": ("Auto-arrange did not finish: {error}", "Авторасстановка не завершилась: {error}"),
     "msg.picker_cancelled": ("Folder selection cancelled.", "Выбор папки отменён."),
-    "msg.folder_rejected": ("The folder was not added.", "Папка не добавлена."),
     "msg.source_hidden": ("The source is hidden from the list; the file on disk is kept.", "Источник скрыт из списка; файл на диске не удалён."),
+    "msg.deleted": ("Deleted from PlatePilot.", "Удалено из PlatePilot."),
+    "msg.imported": ("Added to PlatePilot: {files}.", "Добавлено в PlatePilot: {files}."),
+    "import.files": ("{n} file|{n} files", "{n} файл|{n} файла|{n} файлов"),
+    "import.group": ("Files {time}", "Файлы {time}"),
+    "err.import_type": ("{name}: only ZIP, STL, STEP and 3MF files can be added", "{name}: добавлять можно только ZIP, STL, STEP и 3MF"),
+    "err.import_size": ("{name} is larger than {mb} MB", "{name} больше {mb} MB"),
+    "err.import_state": ("the file transfer was interrupted; add the files again", "передача файлов прервалась; добавьте их ещё раз"),
+    "err.import_path": ("the name of {name} is too long for PlatePilot's folder", "имя {name} слишком длинное для папки PlatePilot"),
+    "err.no_storage": ("PlatePilot's data folder is not available: {error}", "папка данных PlatePilot недоступна: {error}"),
+    "err.not_added": ("only sources added to PlatePilot can be deleted", "удалять можно только источники, добавленные в PlatePilot"),
+    "err.paste_path": ("{path} is not a folder or a ZIP, STL, STEP or 3MF file", "{path} — не папка и не файл ZIP, STL, STEP или 3MF"),
     "err.part_missing": ("part not found", "деталь не найдена"),
     "err.no_preview": ("this part has no preview data", "для этой детали нет данных превью"),
     "err.stl_outside": ("the STL is outside the watched folder", "STL вне отслеживаемой папки"),
@@ -320,6 +378,9 @@ input[type=number]{width:76px}
 .source{display:flex;gap:10px;align-items:flex-start;padding:9px 8px;margin-top:4px;border-radius:var(--r-sm);cursor:pointer;border:1px solid transparent}
 .source:hover{background:var(--surface-2)}.source.on{background:var(--accent-soft);border-color:var(--accent-line)}
 .source .glyph{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none;background:var(--surface-2);color:var(--muted)}.source.on .glyph{background:var(--accent);color:#fff}
+.glyph.k-zip{--k:#d97706}.glyph.k-folder{--k:#2563eb}.glyph.k-added{--k:var(--accent)}[data-orca-theme=dark] .glyph.k-zip{--k:#f5a524}[data-orca-theme=dark] .glyph.k-folder{--k:#60a5fa}
+.source .glyph.k-zip,.source .glyph.k-folder,.source .glyph.k-added,.source-head .glyph.k-zip,.source-head .glyph.k-folder,.source-head .glyph.k-added{background:color-mix(in srgb,var(--k) 15%,transparent);color:var(--k)}
+.source.on .glyph.k-zip,.source.on .glyph.k-folder,.source.on .glyph.k-added{background:var(--k);color:#fff}
 .source .t{min-width:0;flex:1}.source .n{font-weight:600;overflow-wrap:anywhere;line-height:1.3}.source .m{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
 .empty{display:grid;place-items:center;text-align:center;gap:8px;padding:26px 18px;color:var(--muted)}.empty svg{width:42px;height:42px;stroke-width:1.2;opacity:.6}
 .detail{display:grid;grid-template-rows:auto minmax(220px,1fr) auto;gap:14px;min-height:0;min-width:0}
@@ -362,6 +423,12 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
 .section h3{margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}.section p{margin:0 0 10px;color:var(--muted);font-size:12px}
 .folders{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .folder{display:flex;align-items:center;gap:9px;padding:7px 6px 7px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--raised)}.folder .p{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12.5px}.folder svg.ic{color:var(--accent)}
+.folder .fm{color:var(--muted);font-size:11.5px;margin-top:2px}.folder .fm b{color:var(--accent);font-weight:600}.folder.added{background:var(--surface-2);border-style:dashed}
+.chip .n{margin-left:5px;font-size:11px;opacity:.8}
+body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex-start;background:transparent;border-style:dashed;color:var(--muted);white-space:normal;height:auto;min-height:32px;padding:6px 10px;text-align:left}
+.list-note{color:var(--muted);font-size:11.5px;padding:2px 8px 6px}.source.other .n{color:var(--muted)}.chips .end{margin-left:auto}
+.drop{position:fixed;inset:10px;z-index:40;display:grid;place-items:center;border:2px dashed var(--accent);border-radius:16px;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(2px);pointer-events:none}
+.drop-card{display:grid;justify-items:center;gap:8px;max-width:440px;text-align:center;padding:24px}.drop-card svg{width:46px;height:46px;color:var(--accent);stroke-width:1.4}.drop-card h2{margin:0;font-size:17px}.drop-card p{margin:0;color:var(--muted)}
 .row{display:flex;gap:8px;align-items:center}.row input{flex:1}
 .toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
 .switch{appearance:none;width:36px;height:20px;border-radius:999px;background:color-mix(in srgb,var(--fg) 22%,transparent);position:relative;cursor:pointer;margin:0;flex:none;transition:background .15s}
@@ -378,7 +445,9 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
  <symbol id="i-logo" viewBox="0 0 24 24"><path d="M3 15.5 12 20l9-4.5M3 11 12 15.5 21 11 12 6.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 3v3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4"/></symbol>
  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2h8.8A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
- <symbol id="i-zip" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M11 4v2m0 2v2m0 2v2"/><rect x="9.5" y="14" width="3" height="3.5" rx=".8"/></symbol>
+ <symbol id="i-zip" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M12 3v2.5m0 2v2m0 2v2"/><rect x="10" y="14" width="4" height="4.5" rx="1"/></symbol>
+ <symbol id="i-models" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2h8.8A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><path d="m12 10.5 3 1.6v3.3l-3 1.6-3-1.6v-3.3zM9 12.1l3 1.6 3-1.6M12 13.7v3.3"/></symbol>
+ <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M12 11v6m-3-3h6"/></symbol>
  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10m4 0h2M4 17h4m4 0h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
  <symbol id="i-cube" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></symbol>
@@ -394,7 +463,7 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
 <header class="appbar">
  <div class="brand"><div class="brand-mark"><svg><use href="#i-logo"/></svg></div><div><h1>PlatePilot</h1><small data-i18n="app.tagline">Model library and plate planner</small></div></div>
  <div id="printer" class="printer"><span class="name muted" data-i18n="app.loading_profile">Loading the printer profile…</span></div>
- <div class="appbar-actions"><button id="scan" class="primary"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="btn.refresh">Refresh</span></button><button id="openSettings"><svg class="ic"><use href="#i-sliders"/></svg><span data-i18n="btn.folders">Folders</span></button></div>
+ <div class="appbar-actions"><button id="scan" class="primary"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="btn.refresh">Refresh</span></button><button id="addFiles" data-i18n-title="btn.add_files_tip" title="Add ZIP, STL, STEP or 3MF files"><svg class="ic"><use href="#i-file-plus"/></svg><span data-i18n="btn.add_files">Add files</span></button><input id="filePick" type="file" multiple accept=".zip,.stl,.step,.stp,.3mf" hidden><button id="openSettings"><svg class="ic"><use href="#i-sliders"/></svg><span data-i18n="btn.folders">Folders</span></button></div>
 </header>
 <div class="progress"></div>
 
@@ -402,7 +471,7 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
  <section class="card library">
   <div class="card-head"><h2 data-i18n="lib.title">Library</h2><span id="libCount" class="count">0</span></div>
   <div class="search"><svg class="ic"><use href="#i-search"/></svg><input id="filter" data-i18n-ph="lib.search" placeholder="Search by name"></div>
-  <div class="chips" id="kindChips"><button class="chip on" data-kind="all" data-i18n="lib.all">All</button><button class="chip" data-kind="zip">ZIP</button><button class="chip" data-kind="folder" data-i18n="lib.folders">Folders</button></div>
+  <div class="chips" id="kindChips"><button class="chip on" data-kind="all" data-i18n="lib.all">All</button><button class="chip" data-kind="new"><span data-i18n="lib.new">New</span><span id="newCount" class="n"></span></button><button class="chip" data-kind="zip">ZIP</button><button class="chip" data-kind="folder" data-i18n="lib.folders">Folders</button><button id="addedChip" class="chip" data-kind="added" data-i18n="lib.added" hidden>Added</button><button id="markSeen" class="chip ghost end" data-i18n="lib.mark_seen" hidden>Mark all as seen</button></div>
   <div id="archives" class="list"></div>
  </section>
 
@@ -444,7 +513,7 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
  <div class="drawer-body">
   <div class="section"><h3 data-i18n="drawer.folders">Watched folders</h3><p data-i18n="drawer.folders_note">PlatePilot looks for ZIP archives and unpacked model folders in them.</p>
    <div id="folderList" class="folders"></div>
-   <button id="pickFolder" class="primary"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="drawer.pick">Choose folder…</span></button>
+   <div class="row"><button id="pickFolder" class="primary"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="drawer.pick">Choose folder…</span></button><button id="addFiles2"><svg class="ic"><use href="#i-file-plus"/></svg><span data-i18n="btn.add_files">Add files</span></button></div>
    <p id="pasteNote" style="margin:12px 0 6px" data-i18n="drawer.paste">Or paste a folder path:</p>
    <div class="row"><input id="folder" data-i18n-ph="drawer.path_ph" placeholder="Full folder path"><button id="addFolder"><svg class="ic"><use href="#i-plus"/></svg><span data-i18n="drawer.add">Add</span></button></div>
   </div>
@@ -453,10 +522,8 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
   </div>
   <div class="section"><h3 data-i18n="drawer.scan">Scanning</h3>
    <label class="toggle"><span data-i18n="drawer.recursive">Search subfolders</span><input id="recursive" class="switch" type="checkbox" checked></label>
-   <label class="toggle"><span data-i18n="drawer.auto">Check folders automatically</span><input id="autoRefresh" class="switch" type="checkbox"></label>
-   <label class="toggle"><span data-i18n="drawer.interval">Check interval, s</span><input id="pollSeconds" type="number" min="30" max="3600" value="30"></label>
-   <label class="toggle"><span data-i18n="drawer.batch">Ask after every N new ZIP files</span><input id="batchSize" type="number" min="1" max="100" value="10"></label>
-   <p style="margin-top:8px" data-i18n="drawer.audit_note">Orca may ask separately for access to files.</p>
+   <label class="toggle"><span data-i18n="drawer.check_on_open">Check folders when PlatePilot opens</span><input id="checkOnOpen" class="switch" type="checkbox" checked></label>
+   <p style="margin-top:8px" data-i18n="drawer.audit_note">Orca asks once before PlatePilot looks into a watched folder.</p>
   </div>
   <div class="section"><h3 data-i18n="drawer.language">Language</h3>
    <select id="language"><option value="auto" data-i18n="drawer.lang_auto">Same as Orca</option><option value="en">English</option><option value="ru">Русский</option></select>
@@ -464,11 +531,13 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
  </div>
 </aside>
 
+<div id="drop" class="drop" hidden><div class="drop-card"><svg class="ic"><use href="#i-plus"/></svg><h2 data-i18n="drop.title">Drop to add to PlatePilot</h2><p data-i18n="drop.note">ZIP, STL, STEP, 3MF or a folder with them.</p></div></div>
 <div id="modal" class="modal" hidden><div class="dialog"><h2 id="modalTitle" data-i18n="modal.confirm">Confirm</h2><div id="modalText" class="body"></div><div class="actions"><button id="modalNo" data-i18n="modal.cancel">Cancel</button><button id="modalYes" class="primary" data-i18n="modal.continue">Continue</button></div></div></div>
 
 <script>
 const $=id=>document.getElementById(id);
-const S={archives:[],selected:null,selectedKind:null,selectedName:'',parts:[],profile:null,config:{},mesh:null,drag:null,busy:false,pending:null,timer:null,scanTick:null,nativeTick:null,awaitingBatch:false,hasScanned:false,mode:'own',kind:'all',plan:null,previewIndex:-1,strings:{},lang:'en',platform:'windows'};
+const S={archives:[],folders:[],selected:null,selectedKind:null,selectedName:'',selectedAdded:false,parts:[],profile:null,config:{},mesh:null,drag:null,busy:false,scanning:false,importing:false,importWait:null,replyTimer:null,lastScan:0,showOther:false,pending:null,nativeTick:null,mode:'own',kind:'all',plan:null,previewIndex:-1,strings:{},lang:'en',platform:'windows'};
+const IMPORT_RE=/\.(zip|stl|step|stp|3mf)$/i,CHUNK=1536*1024;
 const PALETTE=['#14b8a6','#6366f1','#f59e0b','#ec4899','#0ea5e9','#84cc16','#a855f7','#f97316'];
 const icon=n=>`<svg class="ic"><use href="#i-${n}"/></svg>`;
 function t(key,values={}){return String(S.strings[key]??key).replace(/\{(\w+)\}/g,(m,k)=>values[k]??m)}
@@ -479,31 +548,43 @@ function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function locale(){return S.lang==='ru'?'ru-RU':'en-US'}
 function fmt(v,d=1){return Number(v||0).toLocaleString(locale(),{maximumFractionDigits:d,minimumFractionDigits:0})}
 function status(text,level='info'){$('status').textContent=text;$('statusbar').className='statusbar '+({ok:'ok',warn:'warn',error:'err'}[level]||'')}
-function setBusy(b){S.busy=b;document.body.classList.toggle('busy',b);$('scan').disabled=b;updateActions()}
+function setBusy(b){S.busy=b;document.body.classList.toggle('busy',b);$('scan').disabled=b;clearTimeout(S.replyTimer);if(b)S.replyTimer=setTimeout(noAnswer,30000);updateActions()}
+/* a plugin call that fails inside Orca never answers; the page must not stay busy forever */
+function noAnswer(){if(!S.busy||S.importing||S.nativeTick)return;S.scanning=false;setBusy(false);status(t('st.no_answer'),'error')}
 function selectedStl(){return S.parts.filter(p=>p.included&&p.filetype==='stl'&&p.member)}
 function updateActions(){const n=selectedStl().length;$('plan').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('partCount').textContent=S.parts.length?`${n} / ${S.parts.length}`:'0'}
-function scheduleScanTick(delay=160){if(!S.busy||S.awaitingBatch||S.scanTick)return;S.scanTick=setTimeout(()=>{S.scanTick=null;if(S.busy&&!S.awaitingBatch)send('scan_tick')},delay)}
-function stopScanTicks(){if(S.scanTick)clearTimeout(S.scanTick);S.scanTick=null}
 function scheduleNativeTick(){if(S.nativeTick)return;S.nativeTick=setTimeout(()=>{S.nativeTick=null;send('native_arrange_tick')},700)}
 function stopNativeTicks(){if(S.nativeTick)clearTimeout(S.nativeTick);S.nativeTick=null}
-function requestScan(){if(S.busy)return;stopScanTicks();S.awaitingBatch=false;S.hasScanned=true;setBusy(true);status(t('st.scanning'));resetTimer();send('scan')}
+function requestScan(){if(S.busy)return;S.scanning=true;S.lastScan=Date.now();setBusy(true);status(t('st.scanning'));send('scan')}
 function ask(title,body,kind,payload={},yes){S.pending={kind,payload};$('modalTitle').textContent=title;$('modalText').textContent=body;$('modalYes').textContent=yes||t('modal.continue');$('modal').hidden=false;$('modalYes').focus()}
-function finishAsk(yes){const p=S.pending;S.pending=null;$('modal').hidden=true;if(!p)return;if(p.kind==='folder')send(yes?'confirm_folder':'reject_folder',{path:p.payload.path});else if(p.kind==='batch'){if(yes){S.awaitingBatch=false;send('continue_batch');scheduleScanTick()}else send('cancel_batch')}}
+function finishAsk(yes){const p=S.pending;S.pending=null;$('modal').hidden=true;if(p&&yes&&p.kind==='delete')send('delete_source',{path:p.payload.path})}
 function openDrawer(open){$('drawer').classList.toggle('open',open);$('scrim').classList.toggle('open',open)}
 
 /* settings */
-function applyConfig(c){S.config=c||{};$('autoRefresh').checked=!!S.config.auto_refresh;$('pollSeconds').value=S.config.poll_seconds||30;$('recursive').checked=S.config.recursive!==false;$('batchSize').value=S.config.batch_size||10;const types=S.config.model_types||['stl','step','3mf'];for(const [k,id] of [['stl','modelStl'],['step','modelStep'],['3mf','model3mf']]){$(id).checked=types.includes(k);$(id).parentElement.classList.toggle('on',types.includes(k))}if(S.config.margin_mm!=null)$('margin').value=S.config.margin_mm;$('language').value=S.config.language||'auto';setMode(S.config.arrange_mode||'own',false);renderFolders();resetTimer()}
-function renderFolders(){const folders=S.config.folders||[];$('folderList').innerHTML=folders.length?folders.map(p=>`<div class="folder">${icon('folder')}<span class="p">${esc(p)}</span><button class="icon ghost" title="${esc(t('folders.remove'))}" data-remove="${esc(p)}">${icon('x')}</button></div>`).join(''):`<div class="muted">${esc(t('folders.none'))}</div>`;document.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>send('remove_folder',{path:b.dataset.remove}))}
-function saveUiSettings(){S.config.auto_refresh=$('autoRefresh').checked;S.config.poll_seconds=Math.max(30,Math.min(3600,Number($('pollSeconds').value)||30));$('pollSeconds').value=S.config.poll_seconds;S.config.recursive=$('recursive').checked;S.config.batch_size=Math.max(1,Math.min(100,Number($('batchSize').value)||10));S.config.model_types=['stl','step','3mf'].filter(k=>$(k==='stl'?'modelStl':k==='step'?'modelStep':'model3mf').checked);S.config.margin_mm=Math.max(0,Math.min(20,Number($('margin').value)||0));S.config.arrange_mode=S.mode;S.config.language=$('language').value;send('save_settings',{config:S.config});resetTimer()}
-function resetTimer(){if(S.timer)clearInterval(S.timer);S.timer=null;if(S.config.auto_refresh&&S.hasScanned){S.timer=setInterval(()=>{if(!S.busy&&(S.config.folders||[]).length)requestScan()},Math.max(30,Number(S.config.poll_seconds)||30)*1000)}}
+function applyConfig(c){S.config=c||{};$('checkOnOpen').checked=S.config.check_on_open!==false;$('recursive').checked=S.config.recursive!==false;const types=S.config.model_types||['stl','step','3mf'];for(const [k,id] of [['stl','modelStl'],['step','modelStep'],['3mf','model3mf']]){$(id).checked=types.includes(k);$(id).parentElement.classList.toggle('on',types.includes(k))}if(S.config.margin_mm!=null)$('margin').value=S.config.margin_mm;$('language').value=S.config.language||'auto';setMode(S.config.arrange_mode||'own',false);renderFolders()}
+function when(sec){const d=new Date(sec*1000),hm=d.toLocaleTimeString(locale(),{hour:'2-digit',minute:'2-digit'});return d.toDateString()===new Date().toDateString()?hm:d.toLocaleDateString(locale(),{day:'numeric',month:'short'})+' '+hm}
+function folderMeta(f){if(!f||f.checked==null)return esc(t('folders.never'));if(f.missing)return `<span class="warn">${esc(t('folders.missing'))}</span>`;if(f.unreadable)return `<span class="warn">${esc(t('folders.unreadable'))}</span>`;const out=[esc(t('folders.stats',{sources:plural('folders.sources',f.sources||0),time:when(f.checked)}))];if(f.new)out.push(`<b>${esc(t('folders.new',{n:f.new}))}</b>`);if(f.other)out.push(esc(t('folders.other',{n:f.other})));if(f.empty)out.push(esc(t('folders.empty',{n:f.empty})));if(f.skipped)out.push(`<span class="warn">${esc(t('folders.skipped',{n:f.skipped}))}</span>`);if(f.truncated)out.push(`<span class="warn">${esc(t('folders.truncated',{n:f.truncated}))}</span>`);return out.join(' · ')}
+function renderFolders(){const folders=S.config.folders||[],info=p=>S.folders.find(f=>f.path===p&&f.origin==='watched'),added=S.folders.find(f=>f.origin==='added');let html=folders.length?folders.map(p=>`<div class="folder">${icon('folder')}<div class="p">${esc(p)}<div class="fm">${folderMeta(info(p))}</div></div><button class="icon ghost" title="${esc(t('folders.remove'))}" data-remove="${esc(p)}">${icon('x')}</button></div>`).join(''):`<div class="muted">${esc(t('folders.none'))}</div>`;if(added)html+=`<div class="folder added">${icon('plus')}<div class="p">${esc(t('folders.added'))}<div class="fm">${folderMeta(added)} · ${esc(t('folders.added_note'))}</div></div></div>`;$('folderList').innerHTML=html;document.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{if(S.busy)return;S.scanning=true;setBusy(true);send('remove_folder',{path:b.dataset.remove})})}
+function saveUiSettings(){S.config.check_on_open=$('checkOnOpen').checked;S.config.recursive=$('recursive').checked;S.config.model_types=['stl','step','3mf'].filter(k=>$(k==='stl'?'modelStl':k==='step'?'modelStep':'model3mf').checked);S.config.margin_mm=Math.max(0,Math.min(20,Number($('margin').value)||0));S.config.arrange_mode=S.mode;S.config.language=$('language').value;send('save_settings',{config:S.config})}
 
 /* printer */
 function setProfile(p){S.profile=p||null;if(!p||p.error){$('printer').innerHTML=`<span class="pill warn">${esc(t('printer.unreadable'))}</span><span class="name muted">${esc(p&&p.error||'')}</span>`;return}const s=p.size||{};$('printer').innerHTML=`<span class="name" title="${esc(p.name)}">${esc(p.name||'—')}</span><span class="spec"><span class="pill accent">${fmt(s.x)} × ${fmt(s.y)} ${esc(t('unit.mm'))}</span><span class="pill">Z ${fmt(p.height)}</span>${p.exclusions?`<span class="pill warn" title="${esc(t('printer.zones_tip'))}">${esc(t('printer.zones'))}</span>`:''}</span>`;if(S.mesh)renderMesh()}
 
 /* library */
-function renderArchives(){const q=$('filter').value.trim().toLowerCase();const list=S.archives.filter(x=>x.name.toLowerCase().includes(q)&&(S.kind==='all'||x.kind===S.kind));$('libCount').textContent=S.archives.length;if(S.selected&&!S.archives.some(x=>x.path===S.selected))clearSource(t('st.removed_source'));$('archives').innerHTML=list.length?list.map(a=>{const badges=Object.entries(a.type_counts||{}).map(([k,v])=>`<span class="pill">${esc(k)} ${v}</span>`).join('');return `<div class="source ${S.selected===a.path?'on':''}" data-path="${esc(a.path)}" data-kind="${esc(a.kind)}"><div class="glyph">${icon(a.kind==='folder'?'folder':'zip')}</div><div class="t"><div class="n">${esc(a.name)}</div><div class="m">${badges}<span class="pill">${esc(a.size)}</span>${a.warning?`<span class="pill warn">${esc(a.warning)}</span>`:''}</div></div></div>`}).join(''):`<div class="empty">${icon('folder')}<div>${esc(S.archives.length?t('lib.nothing_found'):(S.config.folders||[]).length?t('lib.press_refresh'):t('lib.add_folder'))}</div></div>`;document.querySelectorAll('.source').forEach(el=>el.onclick=()=>send('open_model',{path:el.dataset.path,kind:el.dataset.kind}))}
+function kindClass(kind,added){return added?'k-added':kind==='folder'?'k-folder':'k-zip'}
+function sourceRow(a){const badges=a.type_counts?Object.entries(a.type_counts).map(([k,v])=>`<span class="pill">${esc(k)} ${v}</span>`).join(''):`<span class="pill">${esc(t('src.unopened'))}</span>`;return `<div class="source ${S.selected===a.path?'on':''} ${a.likely===false?'other':''}" data-path="${esc(a.path)}" data-kind="${esc(a.kind)}"><div class="glyph ${kindClass(a.kind,a.added)}">${icon(a.kind==='folder'?'models':'zip')}</div><div class="t"><div class="n">${esc(a.name)}</div><div class="m">${a.new?`<span class="pill accent">${esc(t('src.new'))}</span>`:''}${a.added?`<span class="pill">${esc(t('src.added'))}</span>`:''}${badges}<span class="pill">${esc(a.size)}</span>${a.warning?`<span class="pill warn">${esc(a.warning)}</span>`:''}</div></div></div>`}
+function renderArchives(){const q=$('filter').value.trim().toLowerCase();const match=x=>S.kind==='all'||(S.kind==='new'?x.new:S.kind==='added'?x.added:x.kind===S.kind);const found=S.archives.filter(x=>x.name.toLowerCase().includes(q)&&match(x));
+ /* a search looks through everything; otherwise archives whose names don't look like models wait in a collapsed group */
+ const main=q?found:found.filter(x=>x.likely!==false),rest=q?[]:found.filter(x=>x.likely===false);const fresh=S.archives.filter(x=>x.new).length;
+ $('libCount').textContent=S.archives.filter(x=>x.likely!==false).length;$('newCount').textContent=fresh||'';$('addedChip').hidden=!S.archives.some(x=>x.added)&&S.kind!=='added';$('markSeen').hidden=!fresh||S.kind!=='new';
+ if(S.selected&&!S.archives.some(x=>x.path===S.selected))clearSource(t('st.removed_source'));
+ let html=main.map(sourceRow).join('');
+ if(rest.length)html+=`<button id="toggleOther" class="more">${icon(S.showOther?'eye-off':'zip')}<span>${esc(t(S.showOther?'lib.other_hide':'lib.other_show',{n:rest.length}))}</span></button>${S.showOther?`<div class="list-note">${esc(t('lib.other_note'))}</div>`+rest.map(sourceRow).join(''):''}`;
+ if(!main.length&&!rest.length)html=`<div class="empty">${icon('folder')}<div>${esc(S.kind==='new'&&S.archives.length?t('lib.no_new'):S.archives.length?t('lib.nothing_found'):(S.config.folders||[]).length&&!S.lastScan?t('lib.press_refresh'):t('lib.add_folder'))}</div></div>`;
+ $('archives').innerHTML=html;if($('toggleOther'))$('toggleOther').onclick=()=>{S.showOther=!S.showOther;renderArchives()};
+ document.querySelectorAll('.source').forEach(el=>el.onclick=()=>{if(S.busy)return;setBusy(true);status(t('st.opening'));send('open_model',{path:el.dataset.path,kind:el.dataset.kind})})}
 function clearSource(note){S.selected=null;S.parts=[];S.plan=null;S.mesh=null;S.previewIndex=-1;renderSourceHead();renderParts(note);renderPlan(null);drawEmptyView()}
-function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;$('sourceHead').innerHTML=`<div class="glyph">${icon(S.selectedKind==='folder'?'folder':'zip')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div><button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
+function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;const action=S.selectedAdded?`<button id="deleteSelected" class="ghost" title="${esc(t('src.delete_tip'))}">${icon('x')}${esc(t('src.delete'))}</button>`:`<button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('sourceHead').innerHTML=`<div class="glyph ${kindClass(S.selectedKind,S.selectedAdded)}">${icon(S.selectedKind==='folder'?'models':'zip')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div>${action}`;if(S.selectedAdded)$('deleteSelected').onclick=()=>ask(t('delete.title'),t('delete.body',{name:S.selectedName}),'delete',{path:S.selected},t('src.delete'));else $('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
 function partMeta(p){if(Array.isArray(p.dims)&&p.dims.length===3&&p.filetype==='stl')return esc(t('parts.meta',{dims:p.dims.map(v=>fmt(v)).join(' × '),facets:Number(p.facets||0).toLocaleString(locale())}));return esc(t('parts.catalog_only',{type:(p.filetype||'model').toUpperCase()}))}
 function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=p.filetype==='stl'&&p.member&&!p.blocked;return `<div class="part ${usable?'':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}</div></div></div>`}).join('');document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex})});updateActions()}
 function invalidatePlan(){if(S.plan){S.plan=null;renderPlan(null)}}
@@ -534,17 +615,19 @@ ctx.fillStyle=dark?'rgba(255,255,255,.55)':'rgba(30,40,50,.55)';ctx.font='11px s
 
 /* plan */
 function renderPlan(plan){S.plan=plan;updateActions();if(!plan){$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);$('summary').innerHTML=pills.join('');
-$('plates').innerHTML=plan.plates.map((p,pi)=>{const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(bx*by)*100;let grid='';for(let x=50;x<bx;x+=50)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="${by}"/>`;for(let y=50;y<by;y+=50)grid+=`<line x1="0" y1="${y}" x2="${bx}" y2="${y}"/>`;const items=p.items.map((it,ii)=>{const col=PALETTE[(pi*3+ii)%PALETTE.length],y=by-it.y-it.h,fs=Math.max(5,Math.min(it.w/7,it.h/2.6,13));const label=it.w>22&&it.h>10?`<text x="${it.x+it.w/2}" y="${y+it.h/2}" font-size="${fs}" text-anchor="middle" dominant-baseline="central" fill="currentColor">${esc(it.name.replace(/\.stl$/i,'').slice(0,Math.max(3,Math.floor(it.w/fs*1.7))))}</text>`:'';return `<g><title>${esc(it.name)} · ${fmt(it.w)} × ${fmt(it.h)} ${esc(t('unit.mm'))}${it.rotated?esc(t('plan.rotated')):''}</title><rect x="${it.x}" y="${y}" width="${it.w}" height="${it.h}" rx="2.5" fill="${col}" fill-opacity=".26" stroke="${col}" stroke-width="1.2"/>${label}</g>`}).join('');return `<div class="plate"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)}))}</span></div><svg viewBox="-2 -2 ${bx+4} ${by+4}"><rect x="0" y="0" width="${bx}" height="${by}" rx="4" fill="var(--surface-2)" stroke="var(--accent-line)" stroke-width="1.2"/><g stroke="var(--line)" stroke-width=".6">${grid}</g>${items}</svg></div>`}).join('')}
+$('plates').innerHTML=plan.plates.map((p,pi)=>{const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(bx*by)*100;let grid='';for(let x=50;x<bx;x+=50)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="${by}"/>`;for(let y=50;y<by;y+=50)grid+=`<line x1="0" y1="${y}" x2="${bx}" y2="${y}"/>`;const items=p.items.map((it,ii)=>{const col=PALETTE[(pi*3+ii)%PALETTE.length],y=by-it.y-it.h,fs=Math.max(5,Math.min(it.w/7,it.h/2.6,13));const label=it.w>22&&it.h>10?`<text x="${it.x+it.w/2}" y="${y+it.h/2}" font-size="${fs}" text-anchor="middle" dominant-baseline="central" fill="currentColor">${esc(it.name.replace(/\.stl$/i,'').slice(0,Math.max(3,Math.floor(it.w/fs*1.7))))}</text>`:'';return `<g><title>${esc(it.name)} · ${fmt(it.w)} × ${fmt(it.h)} ${esc(t('unit.mm'))}${(it.angle||it.rotated)?esc(t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360})):''}</title><rect x="${it.x}" y="${y}" width="${it.w}" height="${it.h}" rx="2.5" fill="${col}" fill-opacity=".26" stroke="${col}" stroke-width="1.2"/>${label}</g>`}).join('');return `<div class="plate"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)}))}</span></div><svg viewBox="-2 -2 ${bx+4} ${by+4}"><rect x="0" y="0" width="${bx}" height="${by}" rx="4" fill="var(--surface-2)" stroke="var(--accent-line)" stroke-width="1.2"/><g stroke="var(--line)" stroke-width=".6">${grid}</g>${items}</svg></div>`}).join('')}
 function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('plan').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
 
 /* wiring */
 $('openSettings').onclick=()=>openDrawer(true);$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('modal').hidden)finishAsk(false);else openDrawer(false)}});
-$('pickFolder').onclick=()=>{status(t('st.opening_picker'));send('pick_folder',{initial:$('folder').value.trim()||(S.config.folders||[])[0]||''})};
-$('addFolder').onclick=()=>{const path=$('folder').value.trim();if(path)send('request_folder_add',{path})};$('folder').onkeydown=e=>{if(e.key==='Enter')$('addFolder').click()};
-$('scan').onclick=requestScan;$('filter').oninput=renderArchives;
+$('pickFolder').onclick=()=>{if(S.busy)return;S.scanning=true;status(t('st.opening_picker'));send('pick_folder',{initial:$('folder').value.trim()||(S.config.folders||[])[0]||''})};
+$('addFolder').onclick=()=>{const path=$('folder').value.trim();if(path&&!S.busy){S.scanning=true;setBusy(true);send('request_folder_add',{path})}};$('folder').onkeydown=e=>{if(e.key==='Enter')$('addFolder').click()};
+const pickFiles=()=>{if(!S.busy){openDrawer(false);$('filePick').value='';$('filePick').click()}};$('addFiles').onclick=pickFiles;$('addFiles2').onclick=pickFiles;
+$('filePick').onchange=()=>{const files=Array.from($('filePick').files||[]);if(files.length)importFiles(files.map(f=>({file:f,top:'',rel:f.name})))};
+$('scan').onclick=requestScan;$('filter').oninput=renderArchives;$('markSeen').onclick=()=>send('mark_seen');
 document.querySelectorAll('#kindChips .chip').forEach(b=>b.onclick=()=>{S.kind=b.dataset.kind;document.querySelectorAll('#kindChips .chip').forEach(x=>x.classList.toggle('on',x===b));renderArchives()});
-for(const id of ['autoRefresh','pollSeconds','recursive','batchSize'])$(id).onchange=saveUiSettings;
+for(const id of ['checkOnOpen','recursive'])$(id).onchange=saveUiSettings;
 for(const id of ['modelStl','modelStep','model3mf'])$(id).onchange=()=>{$(id).parentElement.classList.toggle('on',$(id).checked);saveUiSettings()};
 $('language').onchange=()=>{saveUiSettings();send('init')};
 $('margin').onchange=()=>{invalidatePlan();saveUiSettings()};
@@ -559,24 +642,46 @@ view.onwheel=e=>{if(!S.mesh)return;e.preventDefault();S.mesh.zoom=Math.max(.4,Ma
 const resetView=()=>{if(S.mesh){S.mesh.yaw=.62;S.mesh.pitch=1.02;S.mesh.zoom=fitZoom(S.mesh.lo,S.mesh.hi);renderMesh()}};view.ondblclick=resetView;$('resetView').onclick=resetView;
 window.onresize=()=>renderMesh();new ResizeObserver(()=>renderMesh()).observe(view);
 
+/* folders are checked again when the page comes back into view; nothing runs while it is hidden */
+const recheck=()=>{if(document.visibilityState==='visible'&&S.config.check_on_open!==false&&S.lastScan&&!S.busy&&Date.now()-S.lastScan>60000)requestScan()};
+document.addEventListener('visibilitychange',recheck);window.addEventListener('focus',recheck);
+
+/* drag and drop, paste */
+let dragDepth=0;
+const dragHasFiles=e=>Array.from(e.dataTransfer?.types||[]).includes('Files');
+document.addEventListener('dragenter',e=>{if(!dragHasFiles(e))return;e.preventDefault();dragDepth++;$('drop').hidden=false});
+document.addEventListener('dragover',e=>{if(!dragHasFiles(e))return;e.preventDefault();e.dataTransfer.dropEffect=S.busy?'none':'copy'});
+document.addEventListener('dragleave',e=>{if(!dragHasFiles(e))return;dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)$('drop').hidden=true});
+document.addEventListener('drop',e=>{if(!dragHasFiles(e))return;e.preventDefault();dragDepth=0;$('drop').hidden=true;if(S.busy)return;const entries=Array.from(e.dataTransfer.items||[]).map(i=>i.webkitGetAsEntry?i.webkitGetAsEntry():null).filter(Boolean),files=Array.from(e.dataTransfer.files||[]);collectEntries(entries,files).then(importFiles,err=>status(String(err&&err.message||err),'error'))});
+document.addEventListener('paste',e=>{const el=e.target;if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable)||S.busy)return;const files=Array.from(e.clipboardData?.files||[]);if(files.length){e.preventDefault();importFiles(files.map(f=>({file:f,top:'',rel:f.name})));return}const text=(e.clipboardData?.getData('text')||'').trim();if(text&&text.length<4000&&/^["']?([a-zA-Z]:[\\/]|\\\\|\/|~)/.test(text)){e.preventDefault();S.scanning=true;setBusy(true);send('paste_path',{text})}});
+const entryFile=en=>new Promise((res,rej)=>en.file(res,rej));
+async function walkEntry(dir,top,prefix,out,depth){if(depth>8||out.length>2000)return;const reader=dir.createReader();for(;;){const batch=await new Promise((res,rej)=>reader.readEntries(res,rej));if(!batch.length)break;for(const en of batch){if(en.name.startsWith('.'))continue;if(en.isFile)out.push({entry:en,top,rel:prefix+en.name});else if(en.isDirectory)await walkEntry(en,top,prefix+en.name+'/',out,depth+1)}}}
+async function collectEntries(entries,files){const out=[];if(!entries.length){files.forEach(f=>out.push({file:f,top:'',rel:f.name}));return out}for(const en of entries){if(en.isFile)out.push({entry:en,top:'',rel:en.name});else if(en.isDirectory)await walkEntry(en,en.name,'',out,0)}return out}
+function importRequest(type,extra){return new Promise((res,rej)=>{const timer=setTimeout(()=>{if(S.importWait&&S.importWait.res===done){S.importWait=null;rej(new Error(t('st.no_answer')))}},30000);const done=v=>{clearTimeout(timer);res(v)};S.importWait={res:done,rej:e=>{clearTimeout(timer);rej(e)}};send(type,extra)})}
+function toBase64(bytes){let s='';for(let i=0;i<bytes.length;i+=0x8000)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(s)}
+async function importFiles(list){const items=list.filter(x=>IMPORT_RE.test(x.rel)),skipped=list.length-items.length,extra=skipped?t('st.import_skipped',{n:skipped}):'';if(!items.length){status(t('st.import_none')+extra,'warn');return}const loose=items.filter(x=>!x.top&&!/\.zip$/i.test(x.rel));S.importing=true;setBusy(true);
+ try{send('import_start',{loose:loose.length,first:loose.length?loose[0].rel:''});
+  for(let i=0;i<items.length;i++){const it=items[i],file=it.file||await entryFile(it.entry);const progress=done=>status(t('st.importing',{name:file.name,i:i+1,n:items.length,pct:Math.round(done/Math.max(1,file.size)*100)}));progress(0);let reply=await importRequest('import_begin',{name:file.name,top:it.top,rel:it.rel,size:file.size}),offset=0;
+   while(!reply.done){const bytes=new Uint8Array(await file.slice(offset,offset+CHUNK).arrayBuffer());if(!bytes.length)throw new Error(t('err.import_state'));offset+=bytes.length;progress(offset);reply=await importRequest('import_chunk',{data:toBase64(bytes)})}}
+  S.importing=false;send('import_finish')}
+ catch(err){S.importing=false;S.importWait=null;send('import_cancel');setBusy(false);status(String(err&&err.message||err)+extra,'error')}}
+
 orca.onMessage(msg=>{const k=msg.type;
- if(k==='init'){S.strings=msg.strings||{};S.lang=msg.language||'en';S.platform=msg.platform||'windows';applyStrings();const win=S.platform==='windows';$('pickFolder').hidden=!win;$('pasteNote').textContent=t(win?'drawer.paste':'drawer.paste_only');applyConfig(msg.config||{});setProfile(msg.profile);renderSourceHead();renderParts();renderArchives();if(S.plan)renderPlan(S.plan);if(S.mesh)drawMesh(S.mesh.data);else drawEmptyView();status(t((msg.config?.folders||[]).length?'st.press_refresh':'st.choose_folder'))}
+ if(k==='init'){S.strings=msg.strings||{};S.lang=msg.language||'en';S.platform=msg.platform||'windows';applyStrings();const win=S.platform==='windows';$('pickFolder').hidden=!win;$('pasteNote').textContent=t(win?'drawer.paste':'drawer.paste_only');applyConfig(msg.config||{});setProfile(msg.profile);renderSourceHead();renderParts();renderArchives();renderFolders();if(S.plan)renderPlan(S.plan);if(S.mesh)drawMesh(S.mesh.data);else drawEmptyView();if(msg.scan_interrupted&&!S.lastScan)status(t('st.scan_interrupted'),'warn');else if(!S.lastScan&&S.config.check_on_open!==false)requestScan();else if(!S.lastScan)status(t((msg.config?.folders||[]).length?'st.press_refresh':'st.choose_folder'))}
  else if(k==='config'){applyConfig(msg.config||{})}
  else if(k==='profile'){setProfile(msg.profile)}
- else if(k==='scan_started'){setBusy(true);status(t('st.scanning'));scheduleScanTick()}
- else if(k==='archives'){S.archives=msg.archives||[];renderArchives();if(msg.complete){stopScanTicks();S.awaitingBatch=false;setBusy(false);status(t('st.scanned',{n:S.archives.length}),'ok')}else{setBusy(true);status(t('st.scanning_n',{n:S.archives.length}));scheduleScanTick()}}
+ else if(k==='archives'){S.archives=msg.archives||[];S.folders=msg.folders||[];renderArchives();renderFolders();if(S.scanning){S.scanning=false;if(!S.importing)setBusy(false);const n=S.archives.filter(a=>a.new).length,sources=plural('folders.sources',S.archives.filter(a=>a.likely!==false).length);if(!S.archives.length&&!S.folders.length)status(t('st.choose_folder'));else status(n?t('st.scanned_new',{sources,n}):t('st.scanned',{sources}),'ok')}}
  else if(k==='folder_selected'){if(msg.path)$('folder').value=msg.path}
- else if(k==='folder_consent'){stopScanTicks();setBusy(true);ask(t('consent.title'),t(msg.recursive?'consent.body_recursive':'consent.body',{path:msg.path}),'folder',{path:msg.path},t('consent.yes'))}
- else if(k==='batch_consent'){stopScanTicks();setBusy(true);S.awaitingBatch=true;ask(t('batch.title'),t('batch.body',{n:msg.processed}),'batch')}
  else if(k==='folder_list'){S.config.folders=msg.folders||[];renderFolders();renderArchives()}
- else if(k==='archive'){S.selected=msg.path;S.selectedKind=msg.kind;S.selectedName=msg.name;S.parts=msg.parts||[];S.previewIndex=-1;S.mesh=null;renderSourceHead();renderArchives();renderParts();renderPlan(null);drawEmptyView();status(msg.error||t('st.opened_source',{name:msg.name}),msg.error?'warn':'info')}
+ else if(k==='archive'){S.selected=msg.path;S.selectedKind=msg.kind;S.selectedName=msg.name;S.selectedAdded=!!msg.added;S.parts=msg.parts||[];S.previewIndex=-1;S.mesh=null;if(!S.importing)setBusy(false);renderSourceHead();renderArchives();renderParts();renderPlan(null);drawEmptyView();status(msg.error||t('st.opened_source',{name:msg.name}),msg.error?'warn':'info')}
+ else if(k==='import_next'){if(S.importWait){const w=S.importWait;S.importWait=null;w.res(msg)}}
  else if(k==='preview'){drawMesh(msg)}
  else if(k==='plan'){setProfile(msg.profile);renderPlan(msg);status(t(msg.exportable?'st.plan_ready':'st.plan_problems'),msg.exportable?'ok':'warn')}
  else if(k==='project_ready'){setBusy(false);status(msg.opened?t('st.project_opened'):t('st.project_saved',{path:msg.path,error:msg.error||''}),msg.opened?'ok':'warn')}
  else if(k==='native_arrange_started'){setBusy(true);status(t('st.arranging',{n:msg.count}));scheduleNativeTick()}
  else if(k==='native_arrange_progress'){if(msg.done){stopNativeTicks();setBusy(false);status(msg.message||t('st.arrange_done'),msg.ok?'ok':'error')}else scheduleNativeTick()}
- else if(k==='notice'){if(!S.awaitingBatch&&!S.scanTick&&!S.nativeTick)setBusy(false);status(msg.message||'',msg.level||'info')}
- else if(k==='error'){stopScanTicks();stopNativeTicks();S.awaitingBatch=false;setBusy(false);status(msg.message||t('st.plugin_error'),'error')}
+ else if(k==='notice'){S.scanning=false;if(!S.nativeTick&&!S.importing)setBusy(false);status(msg.message||'',msg.level||'info')}
+ else if(k==='error'){S.scanning=false;if(S.importWait){const w=S.importWait;S.importWait=null;w.rej(new Error(msg.message||t('st.plugin_error')));return}stopNativeTicks();setBusy(false);status(msg.message||t('st.plugin_error'),'error')}
 });
 send('init');
 </script>
@@ -1013,58 +1118,209 @@ def _fingerprint(path):
     return f"{stat.st_size}:{getattr(stat, 'st_mtime_ns', int(stat.st_mtime * 1e9))}"
 
 
-def _iter_sources(folders, recursive=True):
-    rows = 0
+def _orca_can_read(path):
+    """False for a path that Orca 2.5's plugin permission check cannot handle.
+
+    That check lowercases every path component byte by byte in the Windows code page, which
+    turns UTF-8 letters outside Latin (Cyrillic, CJK, ...) into invalid UTF-8; converting the
+    result back to a path throws inside Orca's audit hook, so the plugin call never returns and
+    Orca may crash (PluginAuditManager.cpp, is_denied_path_keyword). Components named like a
+    secret, certificate or config are refused by that check on purpose. Such paths are never
+    listed or opened; their files can be dropped into PlatePilot instead.
+    """
+    if any(ord(c) > 127 for c in str(path)):
+        return False
+    parts = [p.lower() for p in re.split(r"[\\/]+", str(path)) if p]
+    return not any(p in DENIED_PATH_NAMES or p.endswith((".conf", ".ini")) for p in parts)
+
+
+# What an archive probably holds, from its name alone: reading it would make Orca ask about
+# every archive. Model sites name their downloads recognizably (Printables "..._stls.zip" and
+# "+" for spaces, Thingiverse "Name - 1234567.zip", "model_files.zip"); programs, drivers and
+# source code carry platforms, versions and branch names.
+ARCHIVE_MODEL_NAME = re.compile(r"stls?\b|_stl|model_files|\s-\s\d{4,8}\.zip$|\b3mf\b|\bstep\b", re.I)
+ARCHIVE_OTHER_NAME = re.compile(r"driver|win(?:32|64|dows)|\bx(?:64|86)\b|amd64|arm64|setup|install|portable|nightly|\bsdk\b"
+                                r"|-(?:master|main)\.zip$|\d+\.\d+\.\d+|firmware|bluetooth|wireless|adapter|desktop|linux|\bmac\b", re.I)
+ARCHIVE_MAYBE_MODEL_NAME = re.compile(r"\+|_files\.zip$", re.I)
+
+
+def _guess_archive(name):
+    """"models", "other" or "unknown" for an archive that was never opened."""
+    if ARCHIVE_MODEL_NAME.search(name):
+        return "models"
+    if ARCHIVE_OTHER_NAME.search(name):
+        return "other"
+    return "models" if ARCHIVE_MAYBE_MODEL_NAME.search(name) else "unknown"
+
+
+def _likely_models(row):
+    """A source worth listing up front: a model folder, an archive known to hold models, or a
+    never-opened archive whose name looks like a model download."""
+    if row["kind"] != "zip":
+        return True
+    counts = row.get("type_counts")
+    if counts is not None:
+        return sum(counts.values()) > 0
+    return _guess_archive(row["name"]) == "models"
+
+
+def _scan_folder(folder, recursive=True):
+    """Rows for the ZIP archives and model folders under folder, found by their names only.
+
+    Nothing is opened here. Orca asks before a plugin reads a file, so a scan that opened every
+    ZIP asked about archives that turned out to hold no models. Listing the tree takes a single
+    os.walk(), which Orca grants once per watched folder and which covers every subfolder while
+    it runs, so the whole walk has to happen within one call. Subfolders whose path Orca cannot
+    check (see _orca_can_read) are not entered. Returns (rows, truncated, skipped folders).
+    """
+    rows = []
     directories = 0
-    for folder in folders:
-        folder = os.path.realpath(os.path.expanduser(str(folder)))
-        if not os.path.isdir(folder):
+    skipped = 0
+    for current, dirs, files in os.walk(folder, followlinks=False):
+        directories += 1
+        if directories > MAX_SCAN_DIRECTORIES:
+            return rows, True, skipped
+        if recursive:
+            visible = [d for d in dirs if not d.startswith(".")]
+            readable = [d for d in visible if _orca_can_read(os.path.join(current, d))]
+            skipped += len(visible) - len(readable)
+            dirs[:] = sorted(readable, key=str.casefold)
+        else:
+            dirs[:] = []
+        for name in sorted([n for n in files if n.lower().endswith(".zip")], key=str.casefold):
+            path = os.path.join(current, name)
+            try:
+                row = {"kind": "zip", "name": name, "path": path, "root": folder,
+                       "fingerprint": _fingerprint(path), "size": _fmt_size(os.path.getsize(path)),
+                       "count": None, "type_counts": None}
+            except OSError:
+                continue
+            if not _orca_can_read(path):
+                row["warning"] = _t("warn.unsafe_name")
+            rows.append(row)
+            if len(rows) >= MAX_ARCHIVES:
+                return rows, True, skipped
+        model_files = sorted([n for n in files if _model_type_for_name(n)], key=str.casefold)
+        if model_files and _safe_archive_path(current, folder):
+            try:
+                stats = [os.stat(os.path.join(current, name)) for name in model_files]
+            except OSError:
+                continue
+            total = sum(stat.st_size for stat in stats)
+            newest = max(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)) for stat in stats)
+            rows.append({"kind": "folder", "name": os.path.relpath(current, folder) if current != folder else os.path.basename(folder),
+                         "path": os.path.realpath(current), "root": folder,
+                         "fingerprint": f"{len(model_files)}:{total}:{newest}", "size": _fmt_size(total),
+                         "count": len(model_files), "type_counts": _type_counts(model_files), "files": model_files})
+            if len(rows) >= MAX_ARCHIVES:
+                return rows, True, skipped
+    return rows, False, skipped
+
+
+def _update_library(state, folder, rows, truncated, first_scan, now=None):
+    """Mark the new rows of one folder in the saved library state and return the folder's summary.
+
+    state keeps "known" (the fingerprint of every source the user has already seen) and "zips"
+    (the model counts of archives that were opened once). On a folder's first scan everything
+    is taken as seen: a freshly added folder has nothing "new" in it yet.
+    """
+    known = state.setdefault("known", {})
+    zips = state.setdefault("zips", {})
+    summary = {"checked": now if now is not None else time.time(), "sources": 0, "new": 0, "empty": 0, "other": 0,
+               "truncated": MAX_ARCHIVES if truncated else 0}
+    for row in rows:
+        if row["kind"] == "zip":
+            cached = zips.get(row["path"])
+            if cached and cached.get("fingerprint") == row["fingerprint"]:
+                row["type_counts"] = dict(cached.get("counts", {}))
+                row["count"] = sum(row["type_counts"].values())
+        if first_scan:
+            known[row["path"]] = row["fingerprint"]
+        row["new"] = known.get(row["path"]) != row["fingerprint"]
+        row["likely"] = _likely_models(row)
+        if row.get("count") == 0:
+            summary["empty"] += 1
             continue
-        walker = os.walk(folder, followlinks=False)
-        for current, dirs, files in walker:
-            directories += 1
-            if directories > MAX_SCAN_DIRECTORIES:
-                return
-            yield {"kind": "scan_tick"}
-            dirs[:] = sorted([d for d in dirs if not d.startswith(".")], key=str.casefold) if recursive else []
-            zips = sorted([n for n in files if n.lower().endswith(".zip")], key=str.casefold)
-            model_files = sorted([n for n in files if _model_type_for_name(n)], key=str.casefold)
-            for name in zips:
-                path = os.path.join(current, name)
-                try:
-                    yield {"kind": "zip", "name": name, "path": path, "root": folder,
-                           "fingerprint": _fingerprint(path), "size": _fmt_size(os.path.getsize(path)), "count": None}
-                    rows += 1
-                except OSError:
-                    continue
-                if rows >= MAX_ARCHIVES:
-                    return
-            if model_files:
-                path = os.path.realpath(current)
-                if _safe_archive_path(path, folder):
-                    total = 0
-                    try:
-                        for name in model_files:
-                            total += os.path.getsize(os.path.join(current, name))
-                        counts = _type_counts(model_files)
-                        yield {"kind": "folder", "name": os.path.relpath(current, folder) if current != folder else os.path.basename(folder),
-                               "path": path, "root": folder, "fingerprint": "", "size": _fmt_size(total),
-                               "count": len(model_files), "type_counts": counts}
-                        rows += 1
-                    except OSError:
-                        pass
-                    if rows >= MAX_ARCHIVES:
-                        return
+        if not row["likely"]:
+            # Listed apart and not counted as new: a downloaded installer is no news.
+            row["new"] = False
+            summary["other"] += 1
+            continue
+        summary["sources"] += 1
+        summary["new"] += 1 if row["new"] else 0
+    if not truncated:
+        # Forget sources that are gone from this folder, so the state does not grow forever.
+        present = {row["path"] for row in rows}
+        for table in (known, zips):
+            for path in [p for p in table if p not in present and _is_inside(p, folder)]:
+                del table[path]
+    return summary
 
 
-def _inspect_zip(row):
-    with zipfile.ZipFile(row["path"], "r") as zf:
-        counts = _type_counts(entry.filename for entry in zf.infolist() if not entry.is_dir())
-    row["type_counts"] = counts
-    row["count"] = sum(counts.values())
-    if not row["count"]:
-        row["warning"] = _t("warn.zip_empty")
-    return row
+def _safe_name(name, fallback="file"):
+    """A file or folder name from a dropped file that Windows and Orca's permission check accept.
+    Cyrillic is transliterated and other non-Latin letters replaced (see _orca_can_read)."""
+    name = "".join(CYRILLIC_LATIN.get(c.lower(), c).capitalize() if c.isupper() and c.lower() in CYRILLIC_LATIN
+                   else CYRILLIC_LATIN.get(c, c) for c in str(name or ""))
+    name = re.sub(r"[^\x20-\x7e]", "_", name)
+    name = re.sub(r'[<>:"/\\|?*]', "_", name).strip().rstrip(". ")
+    if not name or name in (".", ".."):
+        name = fallback
+    stem, ext = os.path.splitext(name)
+    if stem.lower() in WINDOWS_RESERVED_NAMES or name.lower() in DENIED_PATH_NAMES or stem.lower() in DENIED_PATH_NAMES:
+        stem += "_"
+    if len(stem) > 80:
+        stem = stem[:80].rstrip(". ")
+    return stem + ext.lower() if ext.lower() in IMPORT_EXTENSIONS else stem + ext
+
+
+def _unique_path(folder, name):
+    """folder/name, or folder/name (2), (3)... when that name is taken."""
+    stem, ext = os.path.splitext(name)
+    candidate = os.path.join(folder, name)
+    number = 2
+    while os.path.exists(candidate) or os.path.exists(candidate + ".part"):
+        candidate = os.path.join(folder, f"{stem} ({number}){ext}")
+        number += 1
+    return candidate
+
+
+def _snapshot_folder(source, names, cache_root):
+    """Copy the STL files of a watched model folder into the plugin's own folder and return the copy.
+
+    Reading the files one by one makes Orca ask about every file. shutil.copytree() is a single
+    operation that Orca asks about once per folder, and the copy inside the plugin's data folder
+    can then be read freely. The copy is kept while its files match the folder's.
+    """
+    target = os.path.join(cache_root, hashlib.sha1(_folder_key(source).encode("utf-8")).hexdigest()[:12])
+    manifest_path = os.path.join(target, "manifest.json")
+    wanted = {}
+    for name in names:
+        stat = os.stat(os.path.join(source, name))
+        wanted[name] = [stat.st_size, getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9))]
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as stream:
+            current = json.load(stream)
+    except (OSError, ValueError):
+        current = None
+    if current != wanted or not all(os.path.isfile(os.path.join(target, name)) for name in wanted):
+        if sum(size for size, _ in wanted.values()) > MAX_TOTAL_STL_BYTES:
+            raise ValueError(_t("err.total_folder"))
+        shutil.rmtree(target, ignore_errors=True)
+        if wanted:
+            shutil.copytree(source, target, ignore=lambda _folder, entries: [e for e in entries if e not in wanted],
+                            copy_function=shutil.copyfile)
+        else:
+            os.makedirs(target)
+        with open(manifest_path, "w", encoding="utf-8") as stream:
+            json.dump(wanted, stream)
+    os.utime(manifest_path)
+    copies = sorted((os.path.join(cache_root, d) for d in os.listdir(cache_root)),
+                    key=lambda d: os.path.getmtime(os.path.join(d, "manifest.json")) if os.path.isfile(os.path.join(d, "manifest.json")) else 0,
+                    reverse=True)
+    for old in copies[FOLDER_CACHE_KEEP:]:
+        shutil.rmtree(old, ignore_errors=True)
+    return target
 
 
 def _read_archive(path, root):
@@ -1099,21 +1355,28 @@ def _read_archive(path, root):
     return parts
 
 
-def _read_loose_folder(path, root):
+def _read_loose_folder(path, root, catalog=()):
+    """Parts of a model folder. catalog holds (name, warning) of files that stay in the original
+    folder (STEP, 3MF, oversized STL and names Orca cannot check, which a copy made by
+    _snapshot_folder() leaves out); they are listed from their names without being read."""
     if not _safe_archive_path(path, root):
         raise ValueError(_t("err.folder_outside"))
     parts = []
     total = 0
-    for name in sorted(os.listdir(path), key=str.casefold):
+    catalog = dict(catalog)
+    names = set(n for n in os.listdir(path) if _model_type_for_name(n)) | set(catalog)
+    for name in sorted(names, key=str.casefold):
         model_type = _model_type_for_name(name)
-        if not model_type:
+        if name in catalog and (model_type == "stl" or catalog[name]):
+            parts.append({"name": name, "filetype": model_type, "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False,
+                          "warning": catalog[name] or _t("warn.too_big")})
+            continue
+        if model_type != "stl":
+            parts.append({"name": name, "filetype": model_type, "dims": [], "facets": 0,
+                          "included": False, "warning": _t("warn.stl_only", type=MODEL_TYPE_LABELS[model_type])})
             continue
         member = os.path.join(path, name)
         size = os.path.getsize(member)
-        if model_type != "stl":
-            parts.append({"name": name, "member": member, "filetype": model_type, "dims": [], "facets": 0,
-                          "included": False, "warning": _t("warn.stl_only", type=MODEL_TYPE_LABELS[model_type])})
-            continue
         if size > MAX_STL_BYTES:
             parts.append({"name": name, "member": member, "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big")})
             continue
@@ -1130,6 +1393,74 @@ def _read_loose_folder(path, root):
     return parts
 
 
+def _footprint_hull(raw):
+    """Convex hull of a part's outline seen from above, as (x, y) points (monotone chain).
+    Points are rounded to 0.05 mm first, which keeps big meshes fast and changes nothing
+    a plate layout can notice."""
+    points = set()
+    for triangle in _iter_stl_triangles(raw):
+        for j in (0, 3, 6):
+            points.add((round(triangle[j] * 20) / 20, round(triangle[j + 1] * 20) / 20))
+    points = sorted(points)
+    if len(points) < 3:
+        return points
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in points:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(points):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def _rotated_size(hull, degrees):
+    a = math.radians(degrees)
+    c, s = math.cos(a), math.sin(a)
+    xs = [x * c - y * s for x, y in hull]
+    ys = [x * s + y * c for x, y in hull]
+    return max(xs) - min(xs), max(ys) - min(ys)
+
+
+def _fitting_angle(hull, usable_x, usable_y):
+    """The rotation about Z, in whole degrees, at which a part that fits neither straight nor
+    at 90° fits the bed with the smallest footprint, as (angle, width, depth); None if none does."""
+    best = None
+    for degrees in range(1, 180):
+        w, h = _rotated_size(hull, degrees)
+        if (w <= usable_x + 1e-6 and h <= usable_y + 1e-6) or (h <= usable_x + 1e-6 and w <= usable_y + 1e-6):
+            key = (w * h, min(degrees, 180 - degrees))
+            if best is None or key < best[0]:
+                best = (key, degrees, w, h)
+    return None if best is None else best[1:]
+
+
+def _turn_to_fit(parts, blobs, bed_x, bed_y, margin):
+    """Copies of parts where every part too big for the bed straight or at 90° is turned to the
+    angle at which it fits (diagonal placement); its dims become the turned footprint."""
+    gap = max(0.0, margin)
+    usable_x, usable_y = bed_x - 2 * gap, bed_y - 2 * gap
+    out = []
+    for part in parts:
+        part = dict(part)
+        w, h = (float(v) for v in part["dims"][:2])
+        fits = (w <= usable_x and h <= usable_y) or (h <= usable_x and w <= usable_y)
+        raw = blobs.get(part.get("member"))
+        if not fits and raw:
+            found = _fitting_angle(_footprint_hull(raw), usable_x, usable_y)
+            if found:
+                part["angle"], width, depth = found
+                part["dims"] = [width, depth, part["dims"][2]]
+        out.append(part)
+    return out
+
+
 def _pack(parts, bed_x, bed_y, margin):
     gap = max(0.0, margin)
     usable_x = bed_x - 2 * gap
@@ -1142,7 +1473,8 @@ def _pack(parts, bed_x, bed_y, margin):
         if len(dims) < 2 or min(dims[:2]) <= 0:
             continue
         w, h = float(dims[0]) + gap, float(dims[1]) + gap
-        items.append({"name": part["name"], "member": part.get("member"), "dims": [float(v) for v in dims[:3]], "w": w, "h": h, "z": float(dims[2]), "facets": int(part.get("facets", 0))})
+        items.append({"name": part["name"], "member": part.get("member"), "dims": [float(v) for v in part.get("source_dims", dims)[:3]],
+                      "w": w, "h": h, "z": float(dims[2]), "facets": int(part.get("facets", 0)), "angle": int(part.get("angle", 0))})
 
     # Try several deterministic item orders. Each run uses the MaxRects
     # best-short-side-fit rule, then we keep the layout with fewest plates.
@@ -1224,7 +1556,7 @@ def _pack(parts, bed_x, bed_y, margin):
             plate["free"] = split_free(plate["free"], (fx, fy, w, h))
             plate["items"].append({
                 "name": item["name"], "x": gap + fx, "y": gap + fy,
-                "w": w - gap, "h": h - gap, "z": item["z"], "rotated": rotated,
+                "w": w - gap, "h": h - gap, "z": item["z"], "rotated": rotated, "angle": item["angle"],
                 "member": item.get("member"), "source_dims": item["dims"],
             })
         nonempty = [p for p in plates if p["items"]]
@@ -1355,17 +1687,19 @@ def _write_orca_project(path, plates, model_blobs, profile, app_version, project
                     total_facets += len(triangles)
                     if total_facets > MAX_PROJECT_FACETS:
                         raise ValueError(_t("err.facets_limit", n=f"{MAX_PROJECT_FACETS:,}".replace(",", " ")))
-                    lo = [min(v[axis] for v in vertices) for axis in range(3)]
-                    hi = [max(v[axis] for v in vertices) for axis in range(3)]
+                    # Turn the part about Z (a diagonal turn from _turn_to_fit plus the packer's
+                    # 90°), then centre its footprint, so it fills exactly the cell the plan gave it.
+                    angle = math.radians(float(item.get("angle", 0)) + (90 if item.get("rotated") else 0))
+                    c, s = math.cos(angle), math.sin(angle)
+                    if abs(s) < 1e-12 or abs(c) < 1e-12:
+                        c, s = round(c), round(s)
+                    turned = [(x * c - y * s, x * s + y * c, z) for x, y, z in vertices]
+                    lo = [min(v[axis] for v in turned) for axis in range(3)]
+                    hi = [max(v[axis] for v in turned) for axis in range(3)]
                     cx, cy = (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2
-                    rotated = bool(item.get("rotated"))
                     chunks = [f'<object id="{object_id}" name={quoteattr(str(item["name"]))} type="model"><mesh><vertices>']
-                    for x, y, z in vertices:
-                        x -= cx
-                        y -= cy
-                        if rotated:
-                            x, y = -y, x
-                        chunks.append(f'<vertex x="{x:.5f}" y="{y:.5f}" z="{z - lo[2]:.5f}"/>')
+                    for x, y, z in turned:
+                        chunks.append(f'<vertex x="{x - cx:.5f}" y="{y - cy:.5f}" z="{z - lo[2]:.5f}"/>')
                     chunks.append('</vertices><triangles>')
                     chunks.extend(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in triangles)
                     chunks.append('</triangles></mesh></object>')
@@ -1475,6 +1809,21 @@ def _finish_cli_project(path, settings, names=None):
     os.replace(temp, path)
 
 
+def _cli_unplaced(run_dir):
+    """How many parts Orca's CLI arrange could not put on any plate. It says so only in its own
+    log ("can not be arranged inside plate!", PartPlate.cpp), which it writes into the folder it
+    runs in, and leaves those parts beside the plates."""
+    count = 0
+    for name in os.listdir(run_dir):
+        if name.endswith(".log") and name != "orca-cli.log":
+            try:
+                with open(os.path.join(run_dir, name), "r", encoding="utf-8", errors="replace") as stream:
+                    count += stream.read().count("can not be arranged inside plate")
+            except OSError:
+                pass
+    return count
+
+
 def _count_plates(path):
     with zipfile.ZipFile(path, "r") as project:
         try:
@@ -1506,6 +1855,10 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         if "folders" not in value and value.get("folder"):
             value["folders"] = [value["folder"]]
         config.update(value)
+        # Settings of 0.4 and older: the plugin's own folder consent, timed checks and the
+        # "ask after every N archives" prompt are gone.
+        for key in ("folder", "folder_grants", "auto_refresh", "poll_seconds", "batch_size"):
+            config.pop(key, None)
         configured_types = config.get("model_types", ["stl", "step", "3mf"])
         if not isinstance(configured_types, (list, tuple, set)):
             configured_types = ["stl", "step", "3mf"]
@@ -1522,7 +1875,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 seen.add(_folder_key(folder))
                 folders.append(folder)
         config["folders"] = folders
-        config["folder_grants"] = [p for p in config.get("folder_grants", []) if isinstance(p, str)]
+        config["check_on_open"] = bool(config.get("check_on_open", True))
         if config.get("language") not in ("auto",) + LANGUAGES:
             config["language"] = "auto"
         return config
@@ -1540,22 +1893,62 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         self.post_message({"type": "config", "config": config})
         self.post_message({"type": "folder_list", "folders": config["folders"]})
 
+    @staticmethod
+    def _storage(*parts):
+        """A folder inside the plugin's data folder, created on first use. Orca lets a plugin
+        read and write there without asking."""
+        try:
+            folder = os.path.join(orca.host.plugin.storage(), *parts)
+        except Exception as exc:
+            raise ValueError(_t("err.no_storage", error=str(exc)[:160]))
+        os.makedirs(folder, exist_ok=True)
+        return folder
+
+    def _added_root(self):
+        return self._storage("added")
+
+    @staticmethod
+    def _is_added(path):
+        """True for a path inside the folder of files dropped or pasted into PlatePilot."""
+        try:
+            return _is_inside(path, os.path.join(orca.host.plugin.storage(), "added"))
+        except Exception:
+            return False
+
+    def _library(self):
+        """The saved library state: seen sources, opened archives' model counts, folder summaries."""
+        if getattr(self, "_library_state", None) is None:
+            try:
+                with open(os.path.join(self._storage(), "library.json"), "r", encoding="utf-8") as stream:
+                    state = json.load(stream)
+            except (OSError, ValueError):
+                state = {}
+            self._library_state = state if isinstance(state, dict) else {}
+        return self._library_state
+
+    def _save_library(self):
+        try:
+            path = os.path.join(self._storage(), "library.json")
+            with open(path + ".tmp", "w", encoding="utf-8") as stream:
+                json.dump(self._library(), stream, ensure_ascii=False)
+            os.replace(path + ".tmp", path)
+        except (OSError, ValueError):
+            pass
+
     def _add_folder(self, config, folder):
-        """Add a granted folder, skipping duplicates and folders already covered by another one."""
+        """Watch a folder the user chose, skipping duplicates and folders already covered by another one."""
         if not os.path.isdir(folder):
             raise ValueError(_t("err.folder_missing", path=folder))
+        if not _orca_can_read(folder):
+            raise ValueError(_t("err.unsafe_path", path=folder))
         key = _folder_key(folder)
         recursive = config.get("recursive", True)
-        if key not in {_folder_key(p) for p in config["folder_grants"]}:
-            config["folder_grants"].append(folder)
         for existing in config["folders"]:
             if _folder_key(existing) == key:
-                self._save(config)
                 self._publish_folders(config)
                 self._notice(_t("msg.already_watched", path=existing))
                 return
             if recursive and _is_inside(folder, existing):
-                self._save(config)
                 self._publish_folders(config)
                 self._notice(_t("msg.inside_watched", path=existing))
                 return
@@ -1563,122 +1956,328 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         config["folders"] = [p for p in config["folders"] if p not in covered] + [folder]
         self._save(config)
         self._publish_folders(config)
+        self._scan(config)
         if covered:
             self._notice(_t("msg.replaced_nested", paths=", ".join(covered)))
-        self._scan_start(config)
 
-    def _visible_rows(self, state):
+    def _roots(self, config):
+        """(folder, origin) of every place sources come from: the watched folders and, once
+        something was dropped into PlatePilot, its own folder of added files."""
+        roots = [(folder, "watched") for folder in config.get("folders", [])]
+        try:
+            added = os.path.join(orca.host.plugin.storage(), "added")
+        except Exception:
+            added = ""
+        if added and os.path.isdir(added):
+            roots.append((added, "added"))
+        return roots
+
+    def _scan(self, config):
+        """Find the sources in every root in one call and send the library and folder summaries."""
+        library = self._library()
+        summaries = library.setdefault("folders", {})
+        names = library.get("names", {})
         rows = []
-        hidden = state["config"].get("hidden", {})
-        enabled_types = set(state["config"].get("model_types", ["stl", "step", "3mf"]))
-        for row in state["rows"]:
-            if hidden.get(row["path"]) == row.get("fingerprint"):
-                continue
-            counts = row.get("type_counts", {"stl": row.get("count", 0)})
-            if not any(counts.get(t, 0) for t in enabled_types):
-                continue
-            visible_counts = {MODEL_TYPE_LABELS[t]: counts.get(t, 0) for t in MODEL_TYPE_LABELS if t in enabled_types and counts.get(t, 0)}
-            item = {k: row.get(k) for k in ("kind", "name", "path", "count", "size", "root", "warning")}
-            item["type_counts"] = visible_counts
-            item["type_summary"] = _type_summary(counts)
-            rows.append(item)
-        self.post_message({"type": "archives", "archives": rows, "complete": state.get("complete", False)})
-
-    def _scan_start(self, config):
-        folders = list(config.get("folders", []))
-        if not folders:
-            self._scan_state = None
-            self.post_message({"type": "archives", "archives": [], "complete": True})
-            return
-        grants = {_folder_key(p) for p in config.get("folder_grants", [])}
-        for folder in folders:
-            if _folder_key(folder) not in grants:
-                self._scan_state = None
-                self._awaiting_folder = folder
-                self.post_message({"type": "folder_consent", "path": folder, "recursive": config.get("recursive", True)})
-                return
-        if not hasattr(self, "_seen_sources"):
-            self._seen_sources = {}
-        self._scan_state = {
-            "rows": [], "iterator": iter(_iter_sources(folders, config.get("recursive", True))),
-            "present_zip_paths": set(), "processed": 0, "batch_processed": 0,
-            "batch_size": max(1, min(100, int(config.get("batch_size", 10)))),
-            "config": config, "complete": False, "waiting": False, "pending": None,
-        }
-        self.post_message({"type": "scan_started"})
-
-    def _scan_step(self):
-        state = self._scan_state
-        if not state or state.get("complete") or state.get("waiting"):
-            return
-        inspected = 0
-        visited = 0
-        hidden = state["config"].get("hidden", {})
-        while visited < SCAN_DIRECTORIES_PER_TICK and inspected < SCAN_ARCHIVES_PER_TICK:
-            row = state.get("pending")
-            if row is None:
+        roots = self._roots(config)
+        marker = self._scan_marker()
+        if marker:
+            # Left behind only if Orca closes during the check; the page then skips the next
+            # automatic check instead of repeating it on every start.
+            with open(marker, "w", encoding="utf-8") as stream:
+                stream.write(str(time.time()))
+        try:
+            for folder, origin in roots:
+                key = _folder_key(folder)
+                if not os.path.isdir(folder):
+                    summaries[key] = {"checked": time.time(), "missing": True}
+                    continue
+                if not _orca_can_read(folder):
+                    summaries[key] = {"checked": time.time(), "unreadable": True}
+                    continue
+                found, truncated, skipped = _scan_folder(folder, config.get("recursive", True) or origin == "added")
+                first_scan = origin == "added" or "sources" not in summaries.get(key, {})
+                summaries[key] = _update_library(library, folder, found, truncated, first_scan)
+                summaries[key]["skipped"] = skipped
+                for row in found:
+                    row["added"] = origin == "added"
+                    if row["added"]:
+                        # The user put these here on purpose, whatever they are called.
+                        row["name"] = self._display_name(folder, row["path"], names)
+                        row["likely"] = row.get("count") != 0
+                if origin == "added":
+                    summaries[key]["sources"] += summaries[key].pop("other", 0)
+                rows.extend(found)
+        finally:
+            if marker:
                 try:
-                    row = next(state["iterator"])
-                except StopIteration:
-                    state["complete"] = True
-                    state["rows"] = [r for r in state["rows"] if r["kind"] != "zip" or r["path"] in state["present_zip_paths"]]
-                    self._seen_sources = {p: r for p, r in self._seen_sources.items() if p in state["present_zip_paths"]}
-                    self._visible_rows(state)
-                    self.post_message({"type": "profile", "profile": _get_profile()})
-                    return
-                visited += 1
-            else:
-                state["pending"] = None
+                    os.remove(marker)
+                except OSError:
+                    pass
+        current = {_folder_key(folder) for folder, _ in roots}
+        for key in [k for k in summaries if k not in current]:
+            del summaries[key]
+        self._save_library()
+        self._rows = rows
+        self._post_rows(config)
 
-            if row["kind"] == "scan_tick":
+    def _scan_marker(self):
+        try:
+            return os.path.join(self._storage(), "scan-running")
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _display_name(root, path, names):
+        """The name an added source was dropped with: its files are stored under names that
+        Orca's permission check accepts (see _safe_name), the original names are kept here."""
+        parts, current = [], root
+        for part in os.path.relpath(path, root).split(os.sep):
+            current = os.path.join(current, part)
+            parts.append(names.get(current, part))
+        return os.path.join(*parts)
+
+    def _post_rows(self, config):
+        hidden = config.get("hidden", {})
+        enabled_types = set(config.get("model_types", ["stl", "step", "3mf"]))
+        visible = []
+        for row in getattr(self, "_rows", []):
+            # 0.4 and older hid model folders with an empty fingerprint.
+            if row["path"] in hidden and hidden[row["path"]] in (row.get("fingerprint"), "" if row["kind"] == "folder" else None):
                 continue
-            if row["kind"] == "folder":
-                if hidden.get(row["path"]) != row.get("fingerprint", ""):
-                    state["rows"].append(row)
+            counts = row.get("type_counts")
+            # An archive that was never opened is listed as it is: only opening it tells what it holds.
+            if counts is not None and not any(counts.get(t, 0) for t in enabled_types):
                 continue
+            item = {k: row.get(k) for k in ("kind", "name", "path", "count", "size", "root", "warning", "new", "added", "likely")}
+            item["type_counts"] = None if counts is None else {MODEL_TYPE_LABELS[t]: counts.get(t, 0) for t in MODEL_TYPE_LABELS if t in enabled_types and counts.get(t, 0)}
+            visible.append(item)
+        summaries = self._library().get("folders", {})
+        folders = [{"path": folder, "origin": origin, **summaries.get(_folder_key(folder), {})} for folder, origin in self._roots(config)]
+        self.post_message({"type": "archives", "archives": visible, "folders": folders})
 
-            state["present_zip_paths"].add(row["path"])
-            cached = self._seen_sources.get(row["path"])
-            if cached and cached.get("fingerprint") == row["fingerprint"]:
-                if hidden.get(row["path"]) != row.get("fingerprint"):
-                    state["rows"].append(cached)
-                continue
+    def _row(self, path):
+        return next((r for r in getattr(self, "_rows", []) if r["path"] == path), None)
 
-            if state["batch_processed"] >= state["batch_size"]:
-                state["pending"] = row
-                state["waiting"] = True
-                self._visible_rows(state)
-                self.post_message({"type": "batch_consent", "processed": state["processed"]})
-                return
+    def _mark_seen(self, rows):
+        known = self._library().setdefault("known", {})
+        for row in rows:
+            known[row["path"]] = row["fingerprint"]
+            row["new"] = False
+        self._save_library()
 
-            try:
-                checked = _inspect_zip(dict(row))
-            except Exception as exc:
-                checked = dict(row)
-                checked.update({"count": 0, "warning": _t("warn.zip_unreadable", error=str(exc)[:100])})
-            self._seen_sources[row["path"]] = checked
-            if hidden.get(row["path"]) != row.get("fingerprint"):
-                state["rows"].append(checked)
-            state["processed"] += 1
-            state["batch_processed"] += 1
-            inspected += 1
-
-        self._visible_rows(state)
-
-    def _selected_root(self, path, folders):
-        for folder in folders:
+    def _selected_root(self, path, config):
+        for folder, _ in self._roots(config):
             if _safe_archive_path(path, folder):
                 return os.path.realpath(folder)
         raise ValueError(_t("err.source_gone"))
+
+    def _open_source(self, config, path, kind):
+        """Read a source's parts and make it the selected one."""
+        root = self._selected_root(path, config)
+        row = self._row(path)
+        if not self._is_added(path) and not _orca_can_read(path):
+            raise ValueError(_t("err.unsafe_path", path=path))
+        if kind == "zip":
+            source = (path, "zip", root, ())
+            parts = _read_archive(path, root)
+            if row is not None:
+                counts = _type_counts(p["name"] for p in parts)
+                self._library().setdefault("zips", {})[path] = {"fingerprint": row["fingerprint"], "counts": counts}
+                row["type_counts"], row["count"] = counts, sum(counts.values())
+                row["likely"] = _likely_models(row)
+        elif self._is_added(path):
+            source = (path, "folder", root, ())
+            parts = _read_loose_folder(path, root)
+        else:
+            if not _safe_archive_path(path, root):
+                raise ValueError(_t("err.folder_outside"))
+            names = row["files"] if row else sorted(n for n in os.listdir(path) if _model_type_for_name(n))
+            unsafe = [n for n in names if not _orca_can_read(os.path.join(path, n))]
+            readable = [n for n in names if n not in unsafe and _model_type_for_name(n) == "stl"
+                        and os.path.getsize(os.path.join(path, n)) <= MAX_STL_BYTES]
+            catalog = tuple((n, _t("warn.unsafe_name") if n in unsafe else "") for n in names if n not in readable)
+            copy = _snapshot_folder(path, readable, self._storage("folders"))
+            source = (copy, "folder", copy, catalog)
+            parts = _read_loose_folder(copy, copy, catalog)
+        self._selected_source = source
+        self._last_plan = None
+        if row is not None:
+            self._mark_seen([row])
+        self.post_message({"type": "archive", "path": path, "kind": kind, "name": os.path.basename(path), "parts": parts,
+                           "added": self._is_added(path)})
+        self._post_rows(config)
 
     def _current_parts(self, config):
         source = getattr(self, "_selected_source", None)
         if not source:
             raise ValueError(_t("err.select_source"))
-        path, kind, root = source
+        path, kind, root, catalog = source
         if kind == "zip":
             return _read_archive(path, root)
-        return _read_loose_folder(path, root)
+        return _read_loose_folder(path, root, catalog)
+
+    # Files dropped or pasted into the page arrive in chunks: import_start, then per file
+    # import_begin and import_chunk until the file is complete, then import_finish.
+    def _import_start(self, data):
+        self._import_abort()
+        self._import = {"loose_count": int(data.get("loose", 0)), "first": str(data.get("first", "")),
+                        "loose_dir": None, "dirs": {}, "sources": [], "files": 0, "file": None}
+
+    def _import_abort(self):
+        job = getattr(self, "_import", None)
+        current = job and job.get("file")
+        if current:
+            current["stream"].close()
+            try:
+                os.remove(current["part"])
+            except OSError:
+                pass
+        self._import = None
+
+    def _import_target(self, job, name, top, rel):
+        """Where a dropped file goes inside the folder of added files. Names are made safe for
+        Orca's permission check; the original names are kept for the library list."""
+        added = self._added_root()
+        names = self._library().setdefault("names", {})
+
+        def remember(path, original):
+            if os.path.basename(path) != original:
+                names[path] = original
+            return path
+
+        safe = _safe_name(name)
+        if top:
+            base = job["dirs"].get(top)
+            if base is None:
+                base = remember(_unique_path(added, _safe_name(top, "folder")), top)
+                job["dirs"][top] = base
+            folder = base
+            for part in [p for p in rel.split("/")[:-1][:6] if p]:
+                folder = remember(os.path.join(folder, _safe_name(part, "folder")), part)
+        elif safe.lower().endswith(".zip"):
+            folder = added
+        else:
+            if job["loose_dir"] is None:
+                group = os.path.splitext(job["first"])[0] if job["loose_count"] == 1 else _t("import.group", time=time.strftime("%Y-%m-%d %H-%M"))
+                job["loose_dir"] = remember(_unique_path(added, _safe_name(group, "files")), group)
+            folder = job["loose_dir"]
+        target = _unique_path(folder, safe)
+        if len(target) > MAX_IMPORT_PATH:
+            target = _unique_path(job["dirs"].get(top) or job["loose_dir"] or added, safe)
+        if len(target) > MAX_IMPORT_PATH or not _safe_archive_path(target, added):
+            raise ValueError(_t("err.import_path", name=name))
+        return remember(target, name)
+
+    def _import_begin(self, data):
+        job = getattr(self, "_import", None)
+        if job is None or job.get("file"):
+            raise ValueError(_t("err.import_state"))
+        name = os.path.basename(str(data.get("name", "")).replace("\\", "/"))
+        size = int(data.get("size", -1))
+        if os.path.splitext(name)[1].lower() not in IMPORT_EXTENSIONS:
+            raise ValueError(_t("err.import_type", name=name))
+        if not 0 <= size <= MAX_IMPORT_BYTES:
+            raise ValueError(_t("err.import_size", name=name, mb=MAX_IMPORT_BYTES // (1024 * 1024)))
+        target = self._import_target(job, name, str(data.get("top", "") or ""), str(data.get("rel", "") or name))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        job["file"] = {"target": target, "part": target + ".part", "size": size, "written": 0,
+                       "stream": open(target + ".part", "wb")}
+        self._import_chunk({"data": ""})
+
+    def _import_chunk(self, data):
+        job = getattr(self, "_import", None)
+        current = job and job.get("file")
+        if not current:
+            raise ValueError(_t("err.import_state"))
+        raw = base64.b64decode(str(data.get("data", "")), validate=True)
+        if current["written"] + len(raw) > current["size"]:
+            raise ValueError(_t("err.import_state"))
+        current["stream"].write(raw)
+        current["written"] += len(raw)
+        done = current["written"] == current["size"]
+        if done:
+            current["stream"].close()
+            os.replace(current["part"], current["target"])
+            job["file"] = None
+            job["files"] += 1
+            source = current["target"] if current["target"].lower().endswith(".zip") else os.path.dirname(current["target"])
+            if source not in job["sources"]:
+                job["sources"].append(source)
+        self.post_message({"type": "import_next", "written": current["written"], "done": done})
+
+    def _import_finish(self, config):
+        job = getattr(self, "_import", None)
+        self._import = None
+        if not job:
+            return
+        self._scan(config)
+        if job["sources"]:
+            first = job["sources"][0]
+            self._open_source(config, first, "zip" if first.lower().endswith(".zip") else "folder")
+        self._notice(_t("msg.imported", files=_plural("import.files", job["files"])), "ok")
+
+    def _import_paths(self, config, text):
+        """Paths pasted into the page, one per line as Explorer's "Copy as path" gives them:
+        a folder is watched, a model file or archive is copied into PlatePilot."""
+        folders, files = [], []
+        for line in [l for l in str(text or "").splitlines() if l.strip()][:50]:
+            path = _clean_folder_input(line)
+            if not _orca_can_read(path):
+                raise ValueError(_t("err.unsafe_path", path=path))
+            if os.path.isdir(path):
+                folders.append(path)
+            elif os.path.isfile(path) and os.path.splitext(path)[1].lower() in IMPORT_EXTENSIONS:
+                if os.path.getsize(path) > MAX_IMPORT_BYTES:
+                    raise ValueError(_t("err.import_size", name=os.path.basename(path), mb=MAX_IMPORT_BYTES // (1024 * 1024)))
+                files.append(path)
+            else:
+                raise ValueError(_t("err.paste_path", path=path))
+        for folder in folders:
+            self.post_message({"type": "folder_selected", "path": folder})
+            self._add_folder(config, folder)
+        if not files:
+            return
+        loose = [p for p in files if not p.lower().endswith(".zip")]
+        self._import_start({"loose": len(loose), "first": os.path.basename(loose[0]) if loose else ""})
+        job = self._import
+        for path in files:
+            name = os.path.basename(path)
+            target = self._import_target(job, name, "", name)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            # One read of the user's file, which Orca asks about once; the copy is the plugin's own.
+            with open(path, "rb") as source, open(target + ".part", "wb") as copy:
+                shutil.copyfileobj(source, copy, 1024 * 1024)
+            os.replace(target + ".part", target)
+            job["files"] += 1
+            source_path = target if target.lower().endswith(".zip") else os.path.dirname(target)
+            if source_path not in job["sources"]:
+                job["sources"].append(source_path)
+        self._import_finish(config)
+
+    def _delete_added(self, config, path):
+        """Delete a source from the folder of added files; the user's own files are never touched."""
+        added = self._added_root()
+        row = self._row(path)
+        if row is None or not row.get("added") or not _safe_archive_path(path, added) or _folder_key(path) == _folder_key(added):
+            raise ValueError(_t("err.not_added"))
+        if row["kind"] == "zip":
+            os.remove(path)
+        else:
+            for name in row.get("files", []):
+                try:
+                    os.remove(os.path.join(path, name))
+                except FileNotFoundError:
+                    pass
+            folder = path
+            while _folder_key(folder) != _folder_key(added) and _safe_archive_path(folder, added) and not os.listdir(folder):
+                os.rmdir(folder)
+                folder = os.path.dirname(folder)
+        source = getattr(self, "_selected_source", None)
+        if source and _folder_key(source[0]) == _folder_key(path):
+            self._selected_source = None
+            self._last_plan = None
+        self._scan(config)
+        self._notice(_t("msg.deleted"), "ok")
 
     def _read_stl_blobs(self, source, parts, members):
         """Read the selected STL files again from the current source, with the safety checks."""
@@ -1739,8 +2338,14 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             executable = _orca_executable()
             output = os.path.join(run_dir, "PlatePilot-AutoArrange.3mf")
             log_path = os.path.join(run_dir, "orca-cli.log")
-            command = [executable, "--load-settings", ";".join(settings), "--arrange", "1",
-                       "--export-3mf", output, *inputs]
+            command = [executable, "--load-settings", ";".join(settings), "--arrange", "1"]
+            # Orca arranges without turning parts unless told to; with it, it also tries 45°
+            # and 135°, which is the only way a part longer than the bed side fits.
+            bed_x, bed_y = float(profile["size"]["x"]), float(profile["size"]["y"])
+            if any(not ((p["dims"][0] <= bed_x and p["dims"][1] <= bed_y) or (p["dims"][1] <= bed_x and p["dims"][0] <= bed_y))
+                   for p in parts):
+                command.append("--allow-rotations")
+            command += ["--export-3mf", output, *inputs]
             with open(log_path, "w", encoding="utf-8") as log:
                 process = subprocess.Popen(command, cwd=run_dir, stdout=log, stderr=subprocess.STDOUT, close_fds=True,
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -1782,9 +2387,12 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             shutil.rmtree(job["input_dir"], ignore_errors=True)
             _finish_cli_project(job["output"], job["project_settings"], job["names"])
             plate_count = _count_plates(job["output"])
+            left_out = _cli_unplaced(job["run_dir"])
             _open_project(job["output"])
             message = _t("msg.arranged", parts=_plural("plan.parts", job["count"]), plates=_plural("plan.plates", max(1, plate_count)))
-            self.post_message({"type": "native_arrange_progress", "done": True, "ok": True,
+            if left_out:
+                message = _t("msg.arranged_partly", n=min(left_out, job["count"]), parts=_plural("plan.parts", job["count"]))
+            self.post_message({"type": "native_arrange_progress", "done": True, "ok": not left_out,
                                "message": message, "path": job["output"]})
         except Exception as exc:
             self.post_message({"type": "native_arrange_progress", "done": True, "ok": False,
@@ -1797,14 +2405,14 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             _set_language(config.get("language", "auto"))
             if kind == "init":
                 platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+                marker = self._scan_marker()
                 self.post_message({"type": "init", "config": config, "profile": _get_profile(), "strings": _ui_strings(),
-                                   "language": _LANG, "platform": platform, "version": VERSION})
+                                   "language": _LANG, "platform": platform, "version": VERSION,
+                                   "scan_interrupted": bool(marker) and os.path.exists(marker)})
             elif kind == "save_settings":
                 incoming = data.get("config", {})
-                for key in ("auto_refresh", "recursive"):
+                for key in ("check_on_open", "recursive"):
                     config[key] = bool(incoming.get(key, config.get(key)))
-                config["poll_seconds"] = max(30, min(3600, int(incoming.get("poll_seconds", 30))))
-                config["batch_size"] = max(1, min(100, int(incoming.get("batch_size", 10))))
                 config["margin_mm"] = max(0.0, min(20.0, float(incoming.get("margin_mm", config.get("margin_mm", DEFAULT_MARGIN_MM)))))
                 config["arrange_mode"] = "orca" if incoming.get("arrange_mode") == "orca" else "own"
                 language = incoming.get("language", config.get("language", "auto"))
@@ -1814,10 +2422,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     incoming_types = ["stl", "step", "3mf"]
                 config["model_types"] = [t for t in ("stl", "step", "3mf") if t in incoming_types]
                 self._save(config)
-                state = getattr(self, "_scan_state", None)
-                if state:
-                    state["config"] = config
-                    self._visible_rows(state)
+                if getattr(self, "_rows", None) is not None:
+                    self._post_rows(config)
             elif kind == "pick_folder":
                 initial = str(data.get("initial", "") or "")
                 try:
@@ -1830,26 +2436,11 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     return
                 folder = _clean_folder_input(selected)
                 self.post_message({"type": "folder_selected", "path": folder})
-                # Choosing the folder in the system dialog is the explicit consent.
                 self._add_folder(config, folder)
             elif kind == "request_folder_add":
                 folder = _clean_folder_input(data.get("path", ""))
-                if not os.path.isdir(folder):
-                    raise ValueError(_t("err.folder_missing", path=folder))
                 self.post_message({"type": "folder_selected", "path": folder})
-                if _folder_key(folder) in {_folder_key(p) for p in config.get("folder_grants", [])}:
-                    self._add_folder(config, folder)
-                else:
-                    self._awaiting_folder = folder
-                    self.post_message({"type": "folder_consent", "path": folder, "recursive": config.get("recursive", True)})
-            elif kind == "confirm_folder":
-                self._add_folder(config, _clean_folder_input(data.get("path", "")))
-            elif kind == "reject_folder":
-                folder = _clean_folder_input(data.get("path", ""))
-                config["folders"] = [p for p in config.get("folders", []) if _folder_key(p) != _folder_key(folder)]
-                self._save(config)
-                self._publish_folders(config)
-                self._notice(_t("msg.folder_rejected"))
+                self._add_folder(config, folder)
             elif kind == "remove_folder":
                 target = data.get("path")
                 folders = list(config.get("folders", []))
@@ -1859,53 +2450,50 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 if target:
                     removed = _folder_key(target)
                     config["folders"] = [p for p in folders if _folder_key(p) != removed]
-                    config["folder_grants"] = [p for p in config.get("folder_grants", []) if _folder_key(p) != removed]
                     self._save(config)
                     self._publish_folders(config)
-                    self._scan_start(config)
+                    self._scan(config)
             elif kind == "scan":
-                self._scan_start(config)
-            elif kind == "scan_tick":
-                if getattr(self, "_scan_state", None):
-                    try:
-                        self._scan_step()
-                    except Exception as exc:
-                        self._scan_state = None
-                        self.post_message({"type": "error", "message": _t("err.scan_stopped", error=str(exc))})
-            elif kind == "continue_batch":
-                state = getattr(self, "_scan_state", None)
-                if state and state.get("waiting"):
-                    state["waiting"] = False
-                    state["batch_processed"] = 0
-            elif kind == "cancel_batch":
-                state = getattr(self, "_scan_state", None)
-                if state:
-                    state["complete"] = True
-                    state["waiting"] = False
-                    state["iterator"] = iter(())
-                    self._visible_rows(state)
-                    self.post_message({"type": "profile", "profile": _get_profile()})
+                try:
+                    self._scan(config)
+                except Exception as exc:
+                    raise ValueError(_t("err.scan_stopped", error=str(exc)))
+                self.post_message({"type": "profile", "profile": _get_profile()})
+            elif kind == "mark_seen":
+                self._mark_seen(list(getattr(self, "_rows", [])))
+                self._post_rows(config)
             elif kind == "open_model":
-                path = str(data.get("path", ""))
-                model_kind = str(data.get("kind", "zip"))
-                root = self._selected_root(path, config.get("folders", []))
-                self._selected_source = (path, model_kind, root)
-                self._last_plan = None
-                parts = _read_archive(path, root) if model_kind == "zip" else _read_loose_folder(path, root)
-                self.post_message({"type": "archive", "path": path, "kind": model_kind, "name": os.path.basename(path), "parts": parts})
+                self._open_source(config, str(data.get("path", "")), "zip" if data.get("kind") == "zip" else "folder")
             elif kind == "hide_source":
                 path = str(data.get("path", ""))
-                row = getattr(self, "_seen_sources", {}).get(path)
-                state = getattr(self, "_scan_state", None)
-                if row is None and state:
-                    row = next((r for r in state["rows"] if r["path"] == path), None)
+                row = self._row(path)
                 if row:
                     config.setdefault("hidden", {})[path] = row.get("fingerprint", "")
                     self._save(config)
-                    if state:
-                        state["rows"] = [r for r in state["rows"] if r["path"] != path]
-                        self._visible_rows(state)
+                    self._post_rows(config)
                     self._notice(_t("msg.source_hidden"))
+            elif kind == "delete_source":
+                self._delete_added(config, str(data.get("path", "")))
+            elif kind == "paste_path":
+                self._import_paths(config, data.get("text", ""))
+            elif kind == "import_start":
+                self._import_start(data)
+            elif kind == "import_begin":
+                try:
+                    self._import_begin(data)
+                except Exception:
+                    self._import_abort()
+                    raise
+            elif kind == "import_chunk":
+                try:
+                    self._import_chunk(data)
+                except Exception:
+                    self._import_abort()
+                    raise
+            elif kind == "import_finish":
+                self._import_finish(config)
+            elif kind == "import_cancel":
+                self._import_abort()
             elif kind == "preview_part":
                 source = getattr(self, "_selected_source", None)
                 parts = self._current_parts(config)
@@ -1934,7 +2522,15 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 if not profile or not profile.get("size"):
                     raise ValueError(_t("err.no_printable_area"))
                 margin = float(data.get("margin", DEFAULT_MARGIN_MM))
-                result = _pack(selected, profile["size"]["x"], profile["size"]["y"], margin)
+                bed_x, bed_y = profile["size"]["x"], profile["size"]["y"]
+                gap = max(0.0, margin)
+                too_wide = [p for p in selected if not ((p["dims"][0] <= bed_x - 2 * gap and p["dims"][1] <= bed_y - 2 * gap)
+                                                        or (p["dims"][1] <= bed_x - 2 * gap and p["dims"][0] <= bed_y - 2 * gap))]
+                if too_wide:
+                    blobs = self._read_stl_blobs(source, all_parts, [p["member"] for p in too_wide])
+                    selected = [dict(p, source_dims=p["dims"]) for p in selected]
+                    selected = _turn_to_fit(selected, blobs, bed_x, bed_y, margin)
+                result = _pack(selected, bed_x, bed_y, margin)
                 max_z = profile.get("height")
                 too_tall = [p["name"] for p in selected if max_z and p["dims"][2] > max_z]
                 exportable = bool(result["plates"]) and not result["problems"] and not too_tall
