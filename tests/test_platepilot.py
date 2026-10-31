@@ -3,8 +3,10 @@
 Run with: python -m unittest discover -s tests
 """
 
+import base64
 import importlib.util
 import json
+import math
 import os
 import re
 import struct
@@ -201,6 +203,46 @@ class ProjectFile(unittest.TestCase):
     def test_shared_vertices_are_merged(self):
         vertices, triangles = pp._indexed_mesh(box_stl(10, 10, 10))
         self.assertEqual((len(vertices), len(triangles)), (8, 12))
+
+    def test_non_finite_corners_are_refused(self):
+        raw = bytearray(box_stl(10, 10, 10))
+        struct.pack_into("<f", raw, 84 + 12, float("nan"))
+        with self.assertRaises(ValueError):
+            pp._indexed_mesh(bytes(raw))
+        with self.assertRaises(ValueError):
+            pp._binary_stl_info(bytes(raw))
+
+    def test_dimensions_count_facets_at_even_and_odd_positions(self):
+        # Corners are read as two strided views, one for even records and one for odd ones.
+        far = struct.pack("<3f", 0, 0, 0) + struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 40) + b"\0\0"
+        near = struct.pack("<3f", 0, 0, 0) + struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0) + b"\0\0"
+        box = box_stl(10, 20, 30)
+        for extra in ([far], [near, far]):
+            raw = box[:80] + struct.pack("<I", 12 + len(extra)) + box[84:] + b"".join(extra)
+            self.assertEqual(pp._binary_stl_info(raw)["dims"], [10, 20, 40])
+
+    def test_small_part_preview_has_every_facet(self):
+        info = pp._binary_stl_info(box_stl(10, 20, 30), include_preview=True)
+        self.assertEqual(len(base64.b64decode(info["vertices"])), 12 * 36)
+
+    def test_large_part_preview_is_simplified_as_a_whole(self):
+        # A wavy 200 × 50 mm sheet of 2·130·130 facets, written from left to right: the first
+        # MAX_PREVIEW_FACETS facets of the file cover only the left part of it.
+        n = 130
+        point = lambda i, j: (i * 200 / n, j * 50 / n, 3 * math.sin(i / 7) * math.cos(j / 5))
+        raw = bytearray(80) + struct.pack("<I", 2 * n * n)
+        for i in range(n):
+            for j in range(n):
+                for tri in ((point(i, j), point(i + 1, j), point(i + 1, j + 1)), (point(i, j), point(i + 1, j + 1), point(i, j + 1))):
+                    raw += struct.pack("<3f", 0, 0, 0) + struct.pack("<9f", *[q for p in tri for q in p]) + b"\0\0"
+        info = pp._binary_stl_info(bytes(raw), include_preview=True)
+        self.assertEqual(info["facets"], 2 * n * n)
+        corners = struct.unpack("<%sf" % (len(base64.b64decode(info["vertices"])) // 4), base64.b64decode(info["vertices"]))
+        self.assertLessEqual(len(corners) // 9, pp.MAX_PREVIEW_FACETS)
+        self.assertGreater(len(corners) // 9, pp.MAX_PREVIEW_FACETS // 4)
+        xs = corners[0::3]
+        self.assertLess(min(xs), 2)
+        self.assertGreater(max(xs), 198)
 
     def test_cli_project_settings_are_replaced(self):
         with tempfile.TemporaryDirectory() as folder:

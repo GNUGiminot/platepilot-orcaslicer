@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.5.0"
+# version = "0.5.1"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -26,12 +26,14 @@ import zipfile
 import orca
 
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 MAX_ARCHIVES = 500
-MAX_STL_BYTES = 30 * 1024 * 1024
-MAX_TOTAL_STL_BYTES = 200 * 1024 * 1024
+# A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
+MAX_STL_BYTES = 100 * 1024 * 1024
+MAX_TOTAL_STL_BYTES = 500 * 1024 * 1024
 MAX_PREVIEW_FACETS = 30000
-MAX_PROJECT_FACETS = 600000
+MAX_PROJECT_FACETS = 5_000_000
+EXPORT_BATCH = 50000
 MAX_NATIVE_PARTS = 200
 DEFAULT_MARGIN_MM = 4.0
 MAX_SCAN_DIRECTORIES = 20000
@@ -226,9 +228,9 @@ STRINGS = {
     "st.no_answer": ("The plugin did not answer. Press Refresh to try again.", "Плагин не ответил. Нажмите «Обновить», чтобы попробовать ещё раз."),
     "st.scan_interrupted": ("The last folder check did not finish (Orca was closed), so it was not repeated automatically. Press Refresh to check the folders.",
                             "Прошлая проверка папок не завершилась (Orca закрылась), поэтому автоматически она не повторялась. Нажмите «Обновить», чтобы проверить папки."),
-    "warn.too_big":("file larger than 30 MB", "файл больше 30 MB"),
-    "err.total_archive": ("the STL files in the archive exceed 200 MB in total", "суммарный размер STL в архиве превышает 200 MB"),
-    "err.total_folder": ("the STL files in the folder exceed 200 MB in total", "суммарный размер STL в папке превышает 200 MB"),
+    "warn.too_big":("file larger than {mb} MB", "файл больше {mb} MB"),
+    "err.total_archive": ("the STL files in the archive exceed {mb} MB in total", "суммарный размер STL в архиве превышает {mb} MB"),
+    "err.total_folder": ("the STL files in the folder exceed {mb} MB in total", "суммарный размер STL в папке превышает {mb} MB"),
     "warn.empty_model": ("empty model", "пустая модель"),
     "warn.stl_error": ("STL error: {error}", "ошибка STL: {error}"),
     "err.stl_short": ("STL file is too short", "слишком короткий STL"),
@@ -250,7 +252,7 @@ STRINGS = {
     "err.archive_moved": ("the archive is no longer inside a watched folder", "архив больше не находится в отслеживаемой папке"),
     "err.stl_left_archive": ("the STL is no longer in the selected archive", "STL больше не находится в выбранном архиве"),
     "err.stl_left_folder": ("the STL is no longer in the selected folder", "STL больше не находится в выбранной папке"),
-    "err.stl_limit": ("the STL exceeds the 30 MB limit", "STL превышает лимит 30 MB"),
+    "err.stl_limit": ("the STL exceeds the {mb} MB limit", "STL превышает лимит {mb} MB"),
     "err.arrange_running": ("Orca auto-arrange is already running", "авторасстановка Orca уже выполняется"),
     "err.select_stl": ("select at least one STL part", "отметь хотя бы одну STL-деталь"),
     "err.too_many_parts": ("one run can arrange at most {n} STL files", "за один запуск можно расставить не более {n} STL"),
@@ -1064,44 +1066,124 @@ def _binary_stl_info(raw, include_preview=False):
     count = struct.unpack_from("<I", raw, 80)[0]
     if count > 2_000_000 or 84 + count * 50 != len(raw):
         return _ascii_stl_info(raw, include_preview)
-    lo = [float("inf")] * 3
-    hi = [float("-inf")] * 3
-    vertex_bytes = bytearray()
-    preview_count = min(count, MAX_PREVIEW_FACETS)
-    for i in range(count):
-        off = 84 + i * 50 + 12
-        tri = struct.unpack_from("<9f", raw, off)
-        for j in range(0, 9, 3):
-            for axis in range(3):
-                value = tri[j + axis]
-                if not math.isfinite(value):
-                    raise ValueError(_t("err.stl_coords"))
-                lo[axis] = min(lo[axis], value)
-                hi[axis] = max(hi[axis], value)
-        if include_preview and i < preview_count:
-            vertex_bytes.extend(struct.pack("<9f", *tri))
+    if not count:
+        raise ValueError(_t("err.stl_vertices"))
+    lo, hi = _binary_bounds(raw, count)
+    if lo is None:
+        raise ValueError(_t("err.stl_coords"))
     dims = [round(hi[i] - lo[i], 3) for i in range(3)]
-    return {"facets": count, "dims": dims, "vertices": base64.b64encode(vertex_bytes).decode("ascii") if include_preview else None}
+    vertices = _preview_vertices(lambda: _iter_stl_triangles(raw), count, lo, hi) if include_preview else None
+    return {"facets": count, "dims": dims, "vertices": vertices}
 
 
 def _ascii_stl_info(raw, include_preview=False):
     text = raw.decode("utf-8", "replace")
     verts = []
-    lo = [float("inf")] * 3
-    hi = [float("-inf")] * 3
     for match in re.finditer(r"\bvertex\s+([-+\d.eE]+)\s+([-+\d.eE]+)\s+([-+\d.eE]+)", text, re.I):
         xyz = [float(v) for v in match.groups()]
-        if not all(math.isfinite(v) for v in xyz):
-            continue
-        for axis, value in enumerate(xyz):
-            lo[axis] = min(lo[axis], value)
-            hi[axis] = max(hi[axis], value)
-        if include_preview and len(verts) < MAX_PREVIEW_FACETS * 9:
+        if all(math.isfinite(v) for v in xyz):
             verts.extend(xyz)
-    facets = len(re.findall(r"\bfacet\s+normal\b", text, re.I))
-    if lo[0] == float("inf"):
+    if not verts:
         raise ValueError(_t("err.stl_vertices"))
-    return {"facets": facets or len(verts) // 9, "dims": [round(hi[i] - lo[i], 3) for i in range(3)], "vertices": base64.b64encode(struct.pack("<%sf" % len(verts), *verts)).decode("ascii") if include_preview and verts else None}
+    facets = len(re.findall(r"\bfacet\s+normal\b", text, re.I))
+    lo = [min(verts[axis::3]) for axis in range(3)]
+    hi = [max(verts[axis::3]) for axis in range(3)]
+    triangles = [tuple(verts[i:i + 9]) for i in range(0, len(verts) - 8, 9)]
+    vertices = _preview_vertices(lambda: iter(triangles), len(triangles), lo, hi) if include_preview and triangles else None
+    return {"facets": facets or len(verts) // 9, "dims": [round(hi[i] - lo[i], 3) for i in range(3)], "vertices": vertices}
+
+
+def _binary_bounds(raw, count):
+    """Lowest and highest corner coordinate per axis of a binary STL whose size was checked,
+    or (None, None) for a NaN or infinity.
+
+    The corners are read in place as strided float32 views, so a part of two million facets
+    needs no copy of its 100 MB. A facet record is a normal, three corners and a 16-bit
+    attribute, 50 bytes: even records start on a 4-byte boundary after the 84-byte header and
+    odd ones 2 bytes past one, so a float view from byte 84 holds the even records and one
+    from byte 86 the odd ones, 25 floats per pair of records. STL and every platform Orca runs
+    on are little-endian.
+    """
+    lo, hi = [math.inf] * 3, [-math.inf] * 3
+    view = memoryview(raw)
+    for start, first, records in ((84, 3, (count + 1) // 2), (86, 15, count // 2)):
+        floats = view[start:start + (len(raw) - start) // 4 * 4].cast("f")
+        for j in range(9):
+            values = floats[first + j::25][:records]
+            if not values:
+                continue
+            # min() and max() step over NaN silently; a sum is not finite if any value is not.
+            if not math.isfinite(sum(values)):
+                return None, None
+            axis = j % 3
+            lo[axis] = min(lo[axis], min(values))
+            hi[axis] = max(hi[axis], max(values))
+    return lo, hi
+
+
+def _preview_vertices(triangles, count, lo, hi):
+    """Base64 float32 corners for the page's preview, at most MAX_PREVIEW_FACETS triangles.
+
+    A larger part is simplified as a whole by vertex clustering: corners are snapped to a
+    cubic grid, the corners in each cell merge into their average, and triangles that collapse
+    or repeat are dropped. Taking the first facets of the file instead showed scattered pieces,
+    because STL exporters write facets in no spatial order. Only the preview is simplified;
+    projects always get every facet of the part. `triangles` returns a new iterator over the
+    count triangles for each pass, so a large part is never held as a list of facets.
+    """
+    if count <= MAX_PREVIEW_FACETS:
+        flat = [value for t in triangles() for value in t]
+    else:
+        span = max(hi[axis] - lo[axis] for axis in range(3)) or 1.0
+        # About 0.65·√N cells along the longest side keep most parts under N in one pass;
+        # flat or thin parts come out much smaller, so they get a finer grid once.
+        cells = int(math.sqrt(MAX_PREVIEW_FACETS) * 0.65)
+        flat = _cluster_triangles(triangles(), lo, span / cells)
+        if len(flat) // 9 < MAX_PREVIEW_FACETS // 3:
+            finer = _cluster_triangles(triangles(), lo, span / (cells * 1.6))
+            if len(finer) // 9 <= MAX_PREVIEW_FACETS:
+                flat = finer
+        while len(flat) // 9 > MAX_PREVIEW_FACETS and cells > 4:
+            cells = max(4, int(cells * math.sqrt(MAX_PREVIEW_FACETS * 9 / len(flat)) * 0.95))
+            flat = _cluster_triangles(triangles(), lo, span / cells)
+        flat = flat[:MAX_PREVIEW_FACETS * 9]
+    return base64.b64encode(struct.pack("<%sf" % len(flat), *flat)).decode("ascii")
+
+
+def _cluster_triangles(triangles, lo, step):
+    """Flat corner list of the triangles after merging the corners in each grid cell."""
+    inverse = 1.0 / step
+    lx, ly, lz = lo
+    cells = {}
+    sums = []
+    kept = []
+    seen = set()
+    for t in triangles:
+        ids = []
+        for j in (0, 3, 6):
+            x, y, z = t[j], t[j + 1], t[j + 2]
+            key = (int((x - lx) * inverse), int((y - ly) * inverse), int((z - lz) * inverse))
+            slot = cells.get(key)
+            if slot is None:
+                slot = cells[key] = len(sums)
+                sums.append([x, y, z, 1])
+            else:
+                total = sums[slot]
+                total[0] += x
+                total[1] += y
+                total[2] += z
+                total[3] += 1
+            ids.append(slot)
+        a, b, c = ids
+        if a == b or b == c or a == c:
+            continue
+        # The same triangle in any rotation of its corners, keeping the winding (and so its side).
+        key = (a, b, c) if a < b and a < c else (b, c, a) if b < c else (c, a, b)
+        if key not in seen:
+            seen.add(key)
+            kept.append(key)
+    points = [(x / n, y / n, z / n) for x, y, z, n in sums]
+    return [value for triangle in kept for corner in triangle for value in points[corner]]
 
 
 def _safe_archive_path(path, root):
@@ -1305,7 +1387,7 @@ def _snapshot_folder(source, names, cache_root):
         current = None
     if current != wanted or not all(os.path.isfile(os.path.join(target, name)) for name in wanted):
         if sum(size for size, _ in wanted.values()) > MAX_TOTAL_STL_BYTES:
-            raise ValueError(_t("err.total_folder"))
+            raise ValueError(_t("err.total_folder", mb=MAX_TOTAL_STL_BYTES // (1024 * 1024)))
         shutil.rmtree(target, ignore_errors=True)
         if wanted:
             shutil.copytree(source, target, ignore=lambda _folder, entries: [e for e in entries if e not in wanted],
@@ -1339,11 +1421,11 @@ def _read_archive(path, root):
                               "included": False, "warning": _t("warn.stl_only", type=MODEL_TYPE_LABELS[model_type])})
                 continue
             if info.file_size > MAX_STL_BYTES:
-                parts.append({"name": os.path.basename(info.filename), "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big")})
+                parts.append({"name": os.path.basename(info.filename), "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
                 continue
             total += info.file_size
             if total > MAX_TOTAL_STL_BYTES:
-                raise ValueError(_t("err.total_archive"))
+                raise ValueError(_t("err.total_archive", mb=MAX_TOTAL_STL_BYTES // (1024 * 1024)))
             raw = zf.read(info)
             try:
                 stats = _binary_stl_info(raw)
@@ -1369,7 +1451,7 @@ def _read_loose_folder(path, root, catalog=()):
         model_type = _model_type_for_name(name)
         if name in catalog and (model_type == "stl" or catalog[name]):
             parts.append({"name": name, "filetype": model_type, "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False,
-                          "warning": catalog[name] or _t("warn.too_big")})
+                          "warning": catalog[name] or _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
             continue
         if model_type != "stl":
             parts.append({"name": name, "filetype": model_type, "dims": [], "facets": 0,
@@ -1378,11 +1460,11 @@ def _read_loose_folder(path, root, catalog=()):
         member = os.path.join(path, name)
         size = os.path.getsize(member)
         if size > MAX_STL_BYTES:
-            parts.append({"name": name, "member": member, "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big")})
+            parts.append({"name": name, "member": member, "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
             continue
         total += size
         if total > MAX_TOTAL_STL_BYTES:
-            raise ValueError(_t("err.total_folder"))
+            raise ValueError(_t("err.total_folder", mb=MAX_TOTAL_STL_BYTES // (1024 * 1024)))
         with open(member, "rb") as stream:
             raw = stream.read()
         try:
@@ -1577,8 +1659,8 @@ def _iter_stl_triangles(raw):
     if len(raw) >= 84:
         count = struct.unpack_from("<I", raw, 80)[0]
         if count <= 2_000_000 and 84 + count * 50 == len(raw):
-            for i in range(count):
-                yield struct.unpack_from("<9f", raw, 84 + i * 50 + 12)
+            for record in struct.iter_unpack("<12fH", memoryview(raw)[84:]):
+                yield record[3:12]
             return
     text = raw.decode("utf-8", "replace")
     triangle = []
@@ -1600,23 +1682,20 @@ def _iter_stl_triangles(raw):
 
 def _indexed_mesh(raw):
     """Merge the per-facet STL corners into shared vertices, as Orca's STL loader does."""
+    # Dicts keep insertion order, so a corner's index is the number of corners seen before it.
     index = {}
-    vertices = []
     triangles = []
     for triangle in _iter_stl_triangles(raw):
-        corners = []
-        for j in (0, 3, 6):
-            point = triangle[j:j + 3]
-            if not all(math.isfinite(value) for value in point):
-                raise ValueError(_t("err.stl_coords"))
-            slot = index.get(point)
-            if slot is None:
-                slot = index[point] = len(vertices)
-                vertices.append(point)
-            corners.append(slot)
+        a = index.setdefault(triangle[0:3], len(index))
+        b = index.setdefault(triangle[3:6], len(index))
+        c = index.setdefault(triangle[6:9], len(index))
         # Degenerate facets would only produce mesh errors in Orca.
-        if corners[0] != corners[1] and corners[1] != corners[2] and corners[0] != corners[2]:
-            triangles.append(corners)
+        if a != b and b != c and a != c:
+            triangles.append((a, b, c))
+    vertices = list(index)
+    # The sum is not finite if any coordinate is NaN or infinite; float32 values cannot overflow it.
+    if not math.isfinite(sum(map(sum, vertices))):
+        raise ValueError(_t("err.stl_coords"))
     if not triangles:
         raise ValueError(_t("err.stl_no_triangles"))
     return vertices, triangles
@@ -1665,7 +1744,7 @@ def _write_orca_project(path, plates, model_blobs, profile, app_version, project
         '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
         'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" />'
         '</Relationships>')
-    with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
         archive.writestr('[Content_Types].xml', content_types)
         archive.writestr('_rels/.rels', relationships)
         with archive.open('3D/3dmodel.model', 'w') as model_file:
@@ -1697,13 +1776,17 @@ def _write_orca_project(path, plates, model_blobs, profile, app_version, project
                     lo = [min(v[axis] for v in turned) for axis in range(3)]
                     hi = [max(v[axis] for v in turned) for axis in range(3)]
                     cx, cy = (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2
-                    chunks = [f'<object id="{object_id}" name={quoteattr(str(item["name"]))} type="model"><mesh><vertices>']
-                    for x, y, z in turned:
-                        chunks.append(f'<vertex x="{x - cx:.5f}" y="{y - cy:.5f}" z="{z - lo[2]:.5f}"/>')
-                    chunks.append('</vertices><triangles>')
-                    chunks.extend(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in triangles)
-                    chunks.append('</triangles></mesh></object>')
-                    emit(''.join(chunks))
+                    # Written in batches: the XML of a part with two million facets is about 140 MB.
+                    emit(f'<object id="{object_id}" name={quoteattr(str(item["name"]))} type="model"><mesh><vertices>')
+                    for start in range(0, len(turned), EXPORT_BATCH):
+                        emit(''.join(f'<vertex x="{x - cx:.5f}" y="{y - cy:.5f}" z="{z - lo[2]:.5f}"/>'
+                                     for x, y, z in turned[start:start + EXPORT_BATCH]))
+                    del turned
+                    emit('</vertices><triangles>')
+                    for start in range(0, len(triangles), EXPORT_BATCH):
+                        emit(''.join(f'<triangle v1="{v1}" v2="{v2}" v3="{v3}"/>'
+                                     for v1, v2, v3 in triangles[start:start + EXPORT_BATCH]))
+                    emit('</triangles></mesh></object>')
                     tx = plate_x + min_x + float(item["x"]) + float(item["w"]) / 2
                     ty = plate_y + min_y + float(item["y"]) + float(item["h"]) / 2
                     build_items.append(f'<item objectid="{object_id}" transform="1 0 0 0 1 0 0 0 1 {tx:.5f} {ty:.5f} 0" printable="1"/>')
@@ -2292,7 +2375,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                         raise ValueError(_t("err.stl_left_archive"))
                     info = zf.getinfo(member)
                     if info.file_size > MAX_STL_BYTES:
-                        raise ValueError(_t("err.stl_limit"))
+                        raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
                     blobs[member] = zf.read(info)
         else:
             for member in members:
@@ -2301,7 +2384,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 with open(member, "rb") as stream:
                     blobs[member] = stream.read(MAX_STL_BYTES + 1)
                 if len(blobs[member]) > MAX_STL_BYTES:
-                    raise ValueError(_t("err.stl_limit"))
+                    raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
         return blobs
 
     def _start_native_arrange(self, config, included):
@@ -2511,7 +2594,15 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                         raise ValueError(_t("err.stl_outside"))
                     with open(member, "rb") as stream:
                         raw = stream.read(MAX_STL_BYTES + 1)
-                info = _binary_stl_info(raw, include_preview=True)
+                # Simplifying a large part takes about a second, so the last few previews are kept.
+                previews = getattr(self, "_previews", None)
+                if previews is None:
+                    previews = self._previews = {}
+                key = hashlib.blake2b(raw, digest_size=16).digest()
+                info = previews.pop(key, None) or _binary_stl_info(raw, include_preview=True)
+                previews[key] = info
+                while len(previews) > 12:
+                    previews.pop(next(iter(previews)))
                 self.post_message({"type": "preview", "name": parts[index]["name"], "facets": info["facets"], "dims": info["dims"], "vertices": info["vertices"]})
             elif kind == "plan":
                 source = getattr(self, "_selected_source", None)

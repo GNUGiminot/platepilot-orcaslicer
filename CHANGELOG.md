@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- The preview shows the whole part. Parts with more than 30 000 facets used to show only the first 30 000 facets of the file, which STL exporters write in no particular order, so many models appeared in scattered pieces. Such parts are now simplified evenly for the preview only; the project sent to Orca always has every facet.
+- Larger models: an STL can be up to 100 MB (2 million facets, the most the STL reader takes) instead of 30 MB, an archive or folder up to 500 MB of STL instead of 200 MB, and a project up to 5 million facets instead of 600 000.
+- Projects are written about three times faster (a 1.27-million-facet bundle: 3 s instead of 9 s; 5 million facets: about 13 s), in batches, with the same meshes as before.
+- Part sizes are read in place without copying the file, about three times faster, and a preview of a 2-million-facet part needs almost no memory beyond the file itself.
+- The last previews are kept, so clicking a part again shows it at once.
+
 ## 0.5.0
 
 - Far fewer permission prompts. Checking folders no longer opens every ZIP: it only lists names and sizes in one pass, so Orca asks once per watched folder instead of once per archive and subfolder. An archive is read when you open it; a model folder is copied into PlatePilot's data folder in one step, so Orca asks once per folder instead of once per STL.
