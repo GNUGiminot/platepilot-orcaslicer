@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.5.1"
+# version = "0.5.2"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -26,7 +26,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -358,8 +358,8 @@ input[type=number]{width:76px}
 .muted{color:var(--muted)}.warn{color:var(--warn)}
 /* app bar */
 .appbar{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:linear-gradient(100deg,color-mix(in srgb,var(--accent) 9%,var(--bg)),var(--bg) 46%)}
-.brand{display:flex;align-items:center;gap:10px;min-width:0}.brand-mark{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:linear-gradient(145deg,color-mix(in srgb,#fff 18%,var(--accent)),color-mix(in srgb,#000 18%,var(--accent)));color:#fff;box-shadow:0 8px 18px -10px var(--accent)}
-.brand-mark svg{width:20px;height:20px}.brand h1{font-size:16px;margin:0;letter-spacing:.2px}.brand small{display:block;color:var(--muted);font-size:11.5px;margin-top:-1px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}.brand-mark{width:34px;height:34px;display:grid;place-items:center}
+.brand-mark svg{width:34px;height:34px}.brand h1{font-size:16px;margin:0;letter-spacing:.2px}.brand small{display:block;color:var(--muted);font-size:11.5px;margin-top:-1px}
 .printer{margin-left:auto;display:flex;align-items:center;gap:10px;padding:5px 6px 5px 12px;border:1px solid var(--line);border-radius:999px;background:var(--raised);min-width:0;max-width:52%}
 .printer .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.printer .spec{display:flex;gap:4px}
 .pill{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:11.5px;white-space:nowrap}
@@ -444,7 +444,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
- <symbol id="i-logo" viewBox="0 0 24 24"><path d="M3 15.5 12 20l9-4.5M3 11 12 15.5 21 11 12 6.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 3v3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+ <symbol id="i-logo" viewBox="0 0 320 320"><defs><pattern id="logo-tex" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="3" cy="4" r="1.3" fill="#000" opacity=".16"/><circle cx="10" cy="9" r="1.1" fill="#fff" opacity=".28"/><circle cx="6" cy="12" r=".9" fill="#000" opacity=".12"/></pattern><linearGradient id="logo-sheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient></defs><rect width="320" height="320" rx="72" fill="#1F1C19"/><rect x="44" y="44" width="232" height="232" rx="28" fill="#C8A266"/><rect x="44" y="44" width="232" height="232" rx="28" fill="url(#logo-sheen)"/><rect x="44" y="44" width="232" height="232" rx="28" fill="url(#logo-tex)"/><rect x="45.5" y="45.5" width="229" height="229" rx="27" fill="none" stroke="#fff" stroke-width="3" opacity=".28"/><g fill="#000" opacity=".24"><circle cx="108" cy="113" r="44"/><rect x="162" y="69" width="94" height="120" rx="16"/><rect x="64" y="167" width="88" height="94" rx="16"/><rect x="162" y="199" width="94" height="62" rx="16"/></g><circle cx="108" cy="108" r="44" fill="#F2EBDC"/><circle cx="108" cy="108" r="14" fill="#C8A266"/><rect x="162" y="64" width="94" height="120" rx="16" fill="#F2EBDC"/><rect x="199" y="84" width="20" height="80" rx="10" fill="#C8A266"/><rect x="64" y="162" width="88" height="94" rx="16" fill="#F2EBDC"/><rect x="84" y="182" width="48" height="12" rx="6" fill="#C8A266"/><rect x="84" y="206" width="48" height="12" rx="6" fill="#C8A266"/><rect x="162" y="194" width="94" height="62" rx="16" fill="#1F1C19"/><circle cx="209" cy="225" r="12" fill="#C8A266"/></symbol>
  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4"/></symbol>
  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2h8.8A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
  <symbol id="i-zip" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M12 3v2.5m0 2v2m0 2v2"/><rect x="10" y="14" width="4" height="4.5" rx="1"/></symbol>

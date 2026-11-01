@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- New icon, "Golden PEI": light parts laid out on a textured gold bed. The Orca tab uses a simplified version that stays clear at 20 px; the page header shows the full one.
+
 ## 0.5.1
 
 - The preview shows the whole part. Parts with more than 30 000 facets used to show only the first 30 000 facets of the file, which STL exporters write in no particular order, so many models appeared in scattered pieces. Such parts are now simplified evenly for the preview only; the project sent to Orca always has every facet.
