@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- **Smart layout (beta)**, a new button next to Calculate. It uses as many plates as the PlatePilot layout, but groups the parts of each plate in the middle of the bed instead of the front left corner: away from the edges (at least 10 mm where there is room), with wider even gaps, the plates filled about evenly. Small parts and parts tall for their footprint, which hold on worst, get the places nearest the centre. A plate too full for that keeps the dense layout, moved to the middle. Calculate, Orca auto-arrange and Open in Prepare work as before.
+- The 3D preview is drawn with the graphics card (WebGL). Parts of up to 250 000 facets are shown in full, without the simplification marks of 0.5.1, and turn smoothly: a 210 000-facet part takes about 14 ms per frame instead of 65–380 ms for its 22 000-facet simplified copy.
+- A depth buffer replaces sorting the facets, so back faces no longer show through.
+- The previous 2D preview stays: it is used when WebGL is not available or fails, and can be chosen in Folders > 3D preview. In that mode the plugin sends a simplified copy of up to 30 000 facets, as before.
+- Previews of parts within the limit are prepared about three times faster.
+
 ## 0.5.2
 
 - New icon, "Golden PEI": light parts laid out on a textured gold bed. The Orca tab uses a simplified version that stays clear at 20 px; the page header shows the full one.

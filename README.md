@@ -12,9 +12,10 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 - **Drag and drop, or Add files.** Drop ZIP, STL, STEP or 3MF files or a whole folder onto PlatePilot, paste them with Ctrl+V, or pick them with **Add files**. They are copied into PlatePilot's own folder and opened right away. Any file name works, and Orca does not ask for permission.
 - **A tidy list.** Archives that were never opened are judged by their names. Model downloads are listed up front; programs, drivers and archives with unclear names wait in a collapsed group at the bottom, and search still finds them.
 - **Parts longer than the bed side** are turned diagonally when that makes them fit, in both arrange modes.
-- **3D preview on your bed.** A shaded preview of any STL on the bed of the printer selected in Orca.
+- **3D preview on your bed.** A shaded preview of any STL on the bed of the printer selected in Orca, drawn with the graphics card (WebGL): parts of up to 250 000 facets are shown in full and turn smoothly. Without WebGL, or with it turned off in the settings, a simpler 2D preview of up to 30 000 facets is used.
 - **Two ways to arrange:**
   - **PlatePilot layout:** packs parts by their footprint (MaxRects, six orderings, 90° rotation) with an even gap, and shows each plate with its fill percentage before you send it.
+  - **Smart layout (beta):** the same number of plates, but the parts of each plate form a group in the middle of the bed, away from its edges and evenly spaced; small parts and parts tall for their footprint get the places nearest the centre, and the plates are filled about evenly.
   - **Orca auto-arrange:** hands the parts to Orca's own arrange, which uses the real part outlines and your active printer and process profiles.
 - **One click to Prepare.** The project opens in the window you already have: one object per part, each on its own plate, with your current printer, process and filament profiles.
 - **English and Russian UI.** Follows Orca's language, or pick one in the settings. Light and dark themes follow Orca.

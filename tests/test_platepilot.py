@@ -142,6 +142,70 @@ class Packing(unittest.TestCase):
         self.assertTrue(result["plates"][0]["items"][0]["rotated"])
 
 
+class SmartPacking(unittest.TestCase):
+    def check(self, parts, bed_x, bed_y, margin):
+        """Smart layout keeps every rule of the plain one: same parts, no more plates, inside
+        the bed with the gap, the gap between parts, and sizes that match the part."""
+        plain = pp._pack(parts, bed_x, bed_y, margin)
+        smart = pp._pack_smart(parts, bed_x, bed_y, margin)
+        self.assertEqual(smart["smart"], True)
+        self.assertLessEqual(len(smart["plates"]), len(plain["plates"]))
+        names = sorted(item["name"] for plate in smart["plates"] for item in plate["items"])
+        self.assertEqual(names, sorted(p["name"] for p in parts))
+        dims = {p["name"]: p["dims"] for p in parts}
+        for plate in smart["plates"]:
+            items = plate["items"]
+            for item in items:
+                w, h = dims[item["name"]][:2]
+                self.assertEqual((item["w"], item["h"]), (h, w) if item["rotated"] else (w, h))
+                self.assertGreaterEqual(min(item["x"], item["y"]), margin - 1e-6)
+                self.assertLessEqual(item["x"] + item["w"], bed_x - margin + 1e-6)
+                self.assertLessEqual(item["y"] + item["h"], bed_y - margin + 1e-6)
+            for i, a in enumerate(items):
+                for b in items[i + 1:]:
+                    apart = max(b["x"] - a["x"] - a["w"], a["x"] - b["x"] - b["w"], b["y"] - a["y"] - a["h"], a["y"] - b["y"] - b["h"])
+                    self.assertGreaterEqual(apart, margin - 1e-6)
+        return plain, smart
+
+    def test_parts_are_centred_and_away_from_the_edges(self):
+        parts = [part(f"p{i}.stl", box_stl(30 + i * 3, 60 - i * 2, 10)) for i in range(7)]
+        plain, smart = self.check(parts, 245, 245, 4)
+        items = smart["plates"][0]["items"]
+        left, right = min(i["x"] for i in items), max(i["x"] + i["w"] for i in items)
+        front, back = min(i["y"] for i in items), max(i["y"] + i["h"] for i in items)
+        self.assertAlmostEqual(left + right, 245, places=6)
+        self.assertAlmostEqual(front + back, 245, places=6)
+        self.assertGreaterEqual(min(left, front), 10)
+        self.assertEqual(min(min(i["x"], i["y"]) for i in plain["plates"][0]["items"]), 4)
+
+    def test_single_part_goes_to_the_middle(self):
+        _, smart = self.check([part("a.stl", box_stl(20, 30, 5))], 220, 220, 4)
+        item = smart["plates"][0]["items"][0]
+        self.assertAlmostEqual(item["x"] + item["w"] / 2, 110, places=6)
+        self.assertAlmostEqual(item["y"] + item["h"] / 2, 110, places=6)
+
+    def test_small_parts_sit_nearer_the_centre_than_large_ones(self):
+        parts = [part(f"big{i}.stl", box_stl(70, 50, 10)) for i in range(3)] + [part(f"small{i}.stl", box_stl(12, 12, 5)) for i in range(3)]
+        _, smart = self.check(parts, 245, 245, 4)
+        distance = {i["name"]: math.hypot(i["x"] + i["w"] / 2 - 122.5, i["y"] + i["h"] / 2 - 122.5) for i in smart["plates"][0]["items"]}
+        self.assertLess(max(v for k, v in distance.items() if k.startswith("small")), max(v for k, v in distance.items() if k.startswith("big")))
+
+    def test_tall_part_takes_the_middle(self):
+        parts = [part(f"low{i}.stl", box_stl(30, 30, 8)) for i in range(4)] + [part("tower.stl", box_stl(30, 30, 150))]
+        _, smart = self.check(parts, 245, 245, 4)
+        distance = {i["name"]: math.hypot(i["x"] + i["w"] / 2 - 122.5, i["y"] + i["h"] / 2 - 122.5) for i in smart["plates"][0]["items"]}
+        self.assertEqual(min(distance, key=distance.get), "tower.stl")
+
+    def test_full_plates_and_many_parts_keep_the_rules(self):
+        self.check([part(f"p{i}.stl", box_stl(110, 90, 20)) for i in range(12)], 256, 256, 4)
+        self.check([part(f"p{i}.stl", box_stl(15 + i % 7 * 9, 12 + i % 5 * 11, 5)) for i in range(40)], 220, 220, 2)
+        self.check([part(f"p{i}.stl", box_stl(50, 40, 5)) for i in range(9)], 180, 180, 0)
+
+    def test_parts_that_do_not_fit_return_the_plain_result(self):
+        smart = pp._pack_smart([part("big.stl", box_stl(300, 50, 10))], 256, 256, 4)
+        self.assertEqual((smart["problems"], smart["smart"]), (["big.stl"], "fallback"))
+
+
 class ProjectFile(unittest.TestCase):
     def test_project_places_every_part_inside_its_plate_cell(self):
         parts = [part(f"p{i}.stl", box_stl(110, 90, 20)) for i in range(7)]
@@ -222,12 +286,14 @@ class ProjectFile(unittest.TestCase):
             self.assertEqual(pp._binary_stl_info(raw)["dims"], [10, 20, 40])
 
     def test_small_part_preview_has_every_facet(self):
-        info = pp._binary_stl_info(box_stl(10, 20, 30), include_preview=True)
-        self.assertEqual(len(base64.b64decode(info["vertices"])), 12 * 36)
+        raw = box_stl(10, 20, 30)
+        info = pp._binary_stl_info(raw, include_preview=True)
+        corners = [v for t in pp._iter_stl_triangles(raw) for v in t]
+        self.assertEqual(base64.b64decode(info["vertices"]), struct.pack("<%sf" % len(corners), *corners))
 
     def test_large_part_preview_is_simplified_as_a_whole(self):
         # A wavy 200 × 50 mm sheet of 2·130·130 facets, written from left to right: the first
-        # MAX_PREVIEW_FACETS facets of the file cover only the left part of it.
+        # 10 000 facets of the file cover only the left part of it.
         n = 130
         point = lambda i, j: (i * 200 / n, j * 50 / n, 3 * math.sin(i / 7) * math.cos(j / 5))
         raw = bytearray(80) + struct.pack("<I", 2 * n * n)
@@ -235,14 +301,17 @@ class ProjectFile(unittest.TestCase):
             for j in range(n):
                 for tri in ((point(i, j), point(i + 1, j), point(i + 1, j + 1)), (point(i, j), point(i + 1, j + 1), point(i, j + 1))):
                     raw += struct.pack("<3f", 0, 0, 0) + struct.pack("<9f", *[q for p in tri for q in p]) + b"\0\0"
-        info = pp._binary_stl_info(bytes(raw), include_preview=True)
+        info = pp._binary_stl_info(bytes(raw), include_preview=True, max_facets=10000)
         self.assertEqual(info["facets"], 2 * n * n)
         corners = struct.unpack("<%sf" % (len(base64.b64decode(info["vertices"])) // 4), base64.b64decode(info["vertices"]))
-        self.assertLessEqual(len(corners) // 9, pp.MAX_PREVIEW_FACETS)
-        self.assertGreater(len(corners) // 9, pp.MAX_PREVIEW_FACETS // 4)
+        self.assertLessEqual(len(corners) // 9, 10000)
+        self.assertGreater(len(corners) // 9, 10000 // 4)
         xs = corners[0::3]
         self.assertLess(min(xs), 2)
         self.assertGreater(max(xs), 198)
+        # Within the limit every facet is sent as it is.
+        full = pp._binary_stl_info(bytes(raw), include_preview=True)
+        self.assertEqual(len(base64.b64decode(full["vertices"])), 2 * n * n * 36)
 
     def test_cli_project_settings_are_replaced(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.5.2"
+# version = "0.6.0"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -26,12 +26,13 @@ import zipfile
 import orca
 
 
-VERSION = "0.5.2"
+VERSION = "0.6.0"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
 MAX_TOTAL_STL_BYTES = 500 * 1024 * 1024
-MAX_PREVIEW_FACETS = 30000
+# Facets sent for a preview: the WebGL view shows this many in full; the 2D fallback asks for fewer.
+MAX_PREVIEW_FACETS = 250_000
 MAX_PROJECT_FACETS = 5_000_000
 EXPORT_BATCH = 50000
 MAX_NATIVE_PARTS = 200
@@ -63,7 +64,7 @@ CLI_SKIP_KEYS = {
     "compatible_prints_condition", "print_settings_id", "printer_settings_id", "filament_settings_id",
 }
 DEFAULT_CONFIG = {
-    "folders": [], "hidden": {}, "check_on_open": True, "recursive": True,
+    "folders": [], "hidden": {}, "check_on_open": True, "recursive": True, "gpu_preview": True,
     "margin_mm": DEFAULT_MARGIN_MM,
     "model_types": ["stl", "step", "3mf"], "arrange_mode": "own", "language": "auto",
 }
@@ -94,6 +95,9 @@ STRINGS = {
     "mode.gap": ("Gap", "Зазор"),
     "unit.mm": ("mm", "мм"),
     "btn.plan": ("Calculate", "Рассчитать"),
+    "btn.plan_smart": ("Smart layout", "Умная раскладка"),
+    "btn.plan_smart_tip": ("Beta: the parts of each plate are grouped in the middle, small ones nearest the centre, away from the bed edges and evenly spaced; the plates are filled evenly",
+                           "Бета: детали каждого стола собраны в центре, мелкие ближе к середине, подальше от краёв и с ровными зазорами; столы загружены поровну"),
     "btn.send": ("Open in Prepare", "В «Подготовку»"),
     "btn.arrange": ("Arrange in Orca", "Расставить в Orca"),
     "mode.own_note": ("PlatePilot packs the parts by their footprint on the active printer's bed, shows the plates and opens the project in Prepare.",
@@ -117,6 +121,10 @@ STRINGS = {
     "drawer.check_on_open": ("Check folders when PlatePilot opens", "Проверять папки при открытии PlatePilot"),
     "drawer.audit_note": ("Orca asks once before PlatePilot looks into a watched folder, and once for each archive or model folder you open. Files you drop into PlatePilot need no permission.",
                           "Orca один раз спросит разрешение на просмотр отслеживаемой папки и по одному разу — на каждый архив или папку с моделями, которые вы откроете. Файлам, перетащенным в PlatePilot, разрешения не нужны."),
+    "drawer.preview": ("3D preview", "3D-просмотр"),
+    "drawer.gpu_preview": ("Draw with the graphics card (WebGL)", "Рисовать видеокартой (WebGL)"),
+    "drawer.gpu_note": ("Shows parts of up to 250 000 facets in full and turns smoothly. If the preview looks wrong, turn it off: the simple mode draws up to 30 000 facets.",
+                        "Показывает детали до 250 000 граней целиком и плавно вращается. Если просмотр выглядит неправильно, выключите: простой режим рисует до 30 000 граней."),
     "drawer.language": ("Language", "Язык"),
     "drawer.lang_auto": ("Same as Orca", "Как в Orca"),
     "modal.confirm": ("Confirm", "Подтверждение"),
@@ -185,6 +193,7 @@ STRINGS = {
     "plan.not_fit": ("does not fit: {name}", "не помещается: {name}"),
     "plan.too_tall": ("taller than Z: {name}", "выше Z: {name}"),
     "plan.zones": ("check excluded areas in Orca", "проверьте исключённые зоны в Orca"),
+    "plan.smart": ("smart layout β", "умная раскладка β"),
     "plan.plate": ("Plate {n}", "Стол {n}"),
     "plan.plate_meta": ("{parts} · {fill}%", "{parts} · {fill}%"),
     "plan.rotated": (" · rotated {n}°", " · повёрнута на {n}°"),
@@ -351,7 +360,7 @@ button:active:not(:disabled){transform:translateY(1px)}button:disabled{opacity:.
 button.primary{background:var(--accent);border-color:transparent;color:var(--accent-fg);box-shadow:0 6px 16px -8px color-mix(in srgb,var(--accent) 80%,transparent)}
 button.primary:hover:not(:disabled){background:color-mix(in srgb,#fff 10%,var(--accent))}
 button.ghost{background:transparent;border-color:transparent;color:var(--muted)}button.ghost:hover:not(:disabled){color:var(--fg);background:var(--surface-2);border-color:transparent}
-button.icon{width:32px;padding:0}
+button.icon{width:32px;padding:0}.beta{font-size:10.5px;font-weight:700;line-height:16px;padding:0 5px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
 body input,body select{font:inherit;color:var(--fg);background:var(--raised);border:1px solid var(--line);border-radius:var(--r-sm);height:32px;padding:0 10px;min-width:0}
 body input:focus,body select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 input[type=number]{width:76px}
@@ -397,7 +406,7 @@ input[type=number]{width:76px}
 .check{appearance:none;width:18px;height:18px;margin:0;flex:none;border-radius:5px;border:1.5px solid color-mix(in srgb,var(--fg) 30%,transparent);background:var(--raised);display:grid;place-items:center;cursor:pointer;padding:0}
 .check:checked{background:var(--accent);border-color:var(--accent)}.check:checked::after{content:"";width:9px;height:5px;border:2px solid #fff;border-top:0;border-right:0;transform:translateY(-1px) rotate(-45deg)}.check:disabled{opacity:.4;cursor:default}
 .viewer{position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--accent) 7%,var(--surface)),var(--surface) 60%)}
-canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
+canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:grab;touch-action:none}#viewGl{pointer-events:none}canvas:active{cursor:grabbing}
 .viewer .hud{position:absolute;left:12px;top:10px;right:12px;display:flex;align-items:flex-start;gap:8px;pointer-events:none}.viewer .hud .t{flex:1;min-width:0}
 .viewer .hud b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewer .hud button{pointer-events:auto}
 .viewer .hint{position:absolute;left:12px;bottom:10px;font-size:11.5px;color:var(--muted);pointer-events:none}
@@ -485,7 +494,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
     <div id="parts" class="part-list"></div>
    </div>
    <div class="card viewer">
-    <canvas id="view"></canvas>
+    <canvas id="view"></canvas><canvas id="viewGl" aria-hidden="true"></canvas>
     <div class="hud"><div class="t"><b id="viewTitle"></b><span id="viewMeta" class="muted"></span></div><button id="resetView" class="icon" data-i18n-title="view.reset" title="Reset view" hidden><svg class="ic"><use href="#i-target"/></svg></button></div>
     <div id="viewHint" class="hint" data-i18n="view.hint" hidden>Drag to rotate · wheel to zoom · double-click to reset</div>
     <div id="viewEmpty" class="empty"><svg class="ic"><use href="#i-cube"/></svg><div data-i18n="view.empty">Select an STL part to see it on the printer bed</div></div>
@@ -497,6 +506,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
     <label class="field" id="marginField"><span data-i18n="mode.gap">Gap</span> <input id="margin" type="number" min="0" max="20" step="0.5" value="4"> <span data-i18n="unit.mm">mm</span></label>
     <span class="spacer"></span>
     <button id="plan"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="btn.plan">Calculate</span></button>
+    <button id="planSmart" data-i18n-title="btn.plan_smart_tip" title="Beta: parts grouped in the middle of each plate"><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.plan_smart">Smart layout</span><span class="beta">β</span></button>
     <button id="sendPrepare" class="primary" disabled><svg class="ic"><use href="#i-send"/></svg><span data-i18n="btn.send">Open in Prepare</span></button>
     <button id="nativeArrange" class="primary" hidden><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.arrange">Arrange in Orca</span></button>
    </div>
@@ -527,6 +537,10 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
    <label class="toggle"><span data-i18n="drawer.check_on_open">Check folders when PlatePilot opens</span><input id="checkOnOpen" class="switch" type="checkbox" checked></label>
    <p style="margin-top:8px" data-i18n="drawer.audit_note">Orca asks once before PlatePilot looks into a watched folder.</p>
   </div>
+  <div class="section"><h3 data-i18n="drawer.preview">3D preview</h3>
+   <label class="toggle"><span data-i18n="drawer.gpu_preview">Draw with the graphics card (WebGL)</span><input id="gpuPreview" class="switch" type="checkbox" checked></label>
+   <p style="margin-top:8px" data-i18n="drawer.gpu_note">Shows parts of up to 250 000 facets in full and turns smoothly.</p>
+  </div>
   <div class="section"><h3 data-i18n="drawer.language">Language</h3>
    <select id="language"><option value="auto" data-i18n="drawer.lang_auto">Same as Orca</option><option value="en">English</option><option value="ru">Русский</option></select>
   </div>
@@ -554,7 +568,7 @@ function setBusy(b){S.busy=b;document.body.classList.toggle('busy',b);$('scan').
 /* a plugin call that fails inside Orca never answers; the page must not stay busy forever */
 function noAnswer(){if(!S.busy||S.importing||S.nativeTick)return;S.scanning=false;setBusy(false);status(t('st.no_answer'),'error')}
 function selectedStl(){return S.parts.filter(p=>p.included&&p.filetype==='stl'&&p.member)}
-function updateActions(){const n=selectedStl().length;$('plan').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('partCount').textContent=S.parts.length?`${n} / ${S.parts.length}`:'0'}
+function updateActions(){const n=selectedStl().length;$('plan').disabled=S.busy||!n;$('planSmart').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('partCount').textContent=S.parts.length?`${n} / ${S.parts.length}`:'0'}
 function scheduleNativeTick(){if(S.nativeTick)return;S.nativeTick=setTimeout(()=>{S.nativeTick=null;send('native_arrange_tick')},700)}
 function stopNativeTicks(){if(S.nativeTick)clearTimeout(S.nativeTick);S.nativeTick=null}
 function requestScan(){if(S.busy)return;S.scanning=true;S.lastScan=Date.now();setBusy(true);status(t('st.scanning'));send('scan')}
@@ -563,11 +577,11 @@ function finishAsk(yes){const p=S.pending;S.pending=null;$('modal').hidden=true;
 function openDrawer(open){$('drawer').classList.toggle('open',open);$('scrim').classList.toggle('open',open)}
 
 /* settings */
-function applyConfig(c){S.config=c||{};$('checkOnOpen').checked=S.config.check_on_open!==false;$('recursive').checked=S.config.recursive!==false;const types=S.config.model_types||['stl','step','3mf'];for(const [k,id] of [['stl','modelStl'],['step','modelStep'],['3mf','model3mf']]){$(id).checked=types.includes(k);$(id).parentElement.classList.toggle('on',types.includes(k))}if(S.config.margin_mm!=null)$('margin').value=S.config.margin_mm;$('language').value=S.config.language||'auto';setMode(S.config.arrange_mode||'own',false);renderFolders()}
+function applyConfig(c){S.config=c||{};$('checkOnOpen').checked=S.config.check_on_open!==false;$('recursive').checked=S.config.recursive!==false;$('gpuPreview').checked=S.config.gpu_preview!==false;const types=S.config.model_types||['stl','step','3mf'];for(const [k,id] of [['stl','modelStl'],['step','modelStep'],['3mf','model3mf']]){$(id).checked=types.includes(k);$(id).parentElement.classList.toggle('on',types.includes(k))}if(S.config.margin_mm!=null)$('margin').value=S.config.margin_mm;$('language').value=S.config.language||'auto';setMode(S.config.arrange_mode||'own',false);renderFolders()}
 function when(sec){const d=new Date(sec*1000),hm=d.toLocaleTimeString(locale(),{hour:'2-digit',minute:'2-digit'});return d.toDateString()===new Date().toDateString()?hm:d.toLocaleDateString(locale(),{day:'numeric',month:'short'})+' '+hm}
 function folderMeta(f){if(!f||f.checked==null)return esc(t('folders.never'));if(f.missing)return `<span class="warn">${esc(t('folders.missing'))}</span>`;if(f.unreadable)return `<span class="warn">${esc(t('folders.unreadable'))}</span>`;const out=[esc(t('folders.stats',{sources:plural('folders.sources',f.sources||0),time:when(f.checked)}))];if(f.new)out.push(`<b>${esc(t('folders.new',{n:f.new}))}</b>`);if(f.other)out.push(esc(t('folders.other',{n:f.other})));if(f.empty)out.push(esc(t('folders.empty',{n:f.empty})));if(f.skipped)out.push(`<span class="warn">${esc(t('folders.skipped',{n:f.skipped}))}</span>`);if(f.truncated)out.push(`<span class="warn">${esc(t('folders.truncated',{n:f.truncated}))}</span>`);return out.join(' · ')}
 function renderFolders(){const folders=S.config.folders||[],info=p=>S.folders.find(f=>f.path===p&&f.origin==='watched'),added=S.folders.find(f=>f.origin==='added');let html=folders.length?folders.map(p=>`<div class="folder">${icon('folder')}<div class="p">${esc(p)}<div class="fm">${folderMeta(info(p))}</div></div><button class="icon ghost" title="${esc(t('folders.remove'))}" data-remove="${esc(p)}">${icon('x')}</button></div>`).join(''):`<div class="muted">${esc(t('folders.none'))}</div>`;if(added)html+=`<div class="folder added">${icon('plus')}<div class="p">${esc(t('folders.added'))}<div class="fm">${folderMeta(added)} · ${esc(t('folders.added_note'))}</div></div></div>`;$('folderList').innerHTML=html;document.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{if(S.busy)return;S.scanning=true;setBusy(true);send('remove_folder',{path:b.dataset.remove})})}
-function saveUiSettings(){S.config.check_on_open=$('checkOnOpen').checked;S.config.recursive=$('recursive').checked;S.config.model_types=['stl','step','3mf'].filter(k=>$(k==='stl'?'modelStl':k==='step'?'modelStep':'model3mf').checked);S.config.margin_mm=Math.max(0,Math.min(20,Number($('margin').value)||0));S.config.arrange_mode=S.mode;S.config.language=$('language').value;send('save_settings',{config:S.config})}
+function saveUiSettings(){S.config.check_on_open=$('checkOnOpen').checked;S.config.recursive=$('recursive').checked;S.config.gpu_preview=$('gpuPreview').checked;S.config.model_types=['stl','step','3mf'].filter(k=>$(k==='stl'?'modelStl':k==='step'?'modelStep':'model3mf').checked);S.config.margin_mm=Math.max(0,Math.min(20,Number($('margin').value)||0));S.config.arrange_mode=S.mode;S.config.language=$('language').value;send('save_settings',{config:S.config})}
 
 /* printer */
 function setProfile(p){S.profile=p||null;if(!p||p.error){$('printer').innerHTML=`<span class="pill warn">${esc(t('printer.unreadable'))}</span><span class="name muted">${esc(p&&p.error||'')}</span>`;return}const s=p.size||{};$('printer').innerHTML=`<span class="name" title="${esc(p.name)}">${esc(p.name||'—')}</span><span class="spec"><span class="pill accent">${fmt(s.x)} × ${fmt(s.y)} ${esc(t('unit.mm'))}</span><span class="pill">Z ${fmt(p.height)}</span>${p.exclusions?`<span class="pill warn" title="${esc(t('printer.zones_tip'))}">${esc(t('printer.zones'))}</span>`:''}</span>`;if(S.mesh)renderMesh()}
@@ -588,14 +602,40 @@ function renderArchives(){const q=$('filter').value.trim().toLowerCase();const m
 function clearSource(note){S.selected=null;S.parts=[];S.plan=null;S.mesh=null;S.previewIndex=-1;renderSourceHead();renderParts(note);renderPlan(null);drawEmptyView()}
 function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;const action=S.selectedAdded?`<button id="deleteSelected" class="ghost" title="${esc(t('src.delete_tip'))}">${icon('x')}${esc(t('src.delete'))}</button>`:`<button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('sourceHead').innerHTML=`<div class="glyph ${kindClass(S.selectedKind,S.selectedAdded)}">${icon(S.selectedKind==='folder'?'models':'zip')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div>${action}`;if(S.selectedAdded)$('deleteSelected').onclick=()=>ask(t('delete.title'),t('delete.body',{name:S.selectedName}),'delete',{path:S.selected},t('src.delete'));else $('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
 function partMeta(p){if(Array.isArray(p.dims)&&p.dims.length===3&&p.filetype==='stl')return esc(t('parts.meta',{dims:p.dims.map(v=>fmt(v)).join(' × '),facets:Number(p.facets||0).toLocaleString(locale())}));return esc(t('parts.catalog_only',{type:(p.filetype||'model').toUpperCase()}))}
-function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=p.filetype==='stl'&&p.member&&!p.blocked;return `<div class="part ${usable?'':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}</div></div></div>`}).join('');document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex})});updateActions()}
+function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=p.filetype==='stl'&&p.member&&!p.blocked;return `<div class="part ${usable?'':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}</div></div></div>`}).join('');document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})});updateActions()}
 function invalidatePlan(){if(S.plan){S.plan=null;renderPlan(null)}}
 
 /* 3D preview */
 function accentRgb(){const v=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();const m=/^#([0-9a-f]{6})$/i.exec(v);if(m){const n=parseInt(m[1],16);return [n>>16&255,n>>8&255,n&255]}const r=/rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(v);return r?[+r[1],+r[2],+r[3]]:[0,150,136]}
-function drawEmptyView(){const c=$('view');const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);$('viewEmpty').hidden=false;$('viewHint').hidden=true;$('resetView').hidden=true;$('viewTitle').textContent='';$('viewMeta').textContent=''}
+function drawEmptyView(){const c=$('view');const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);glClear();$('viewEmpty').hidden=false;$('viewHint').hidden=true;$('resetView').hidden=true;$('viewTitle').textContent='';$('viewMeta').textContent=''}
 function fitZoom(lo,hi){const bed=Math.max(Number(S.profile?.size?.x)||250,Number(S.profile?.size?.y)||250),part=Math.max(1,...hi.map((v,i)=>v-lo[i]));return Math.max(1,Math.min(2.4,.5*bed/part))}
-function drawMesh(data){if(!data||!data.vertices){S.mesh=null;drawEmptyView();return}const arr=Uint8Array.from(atob(data.vertices),x=>x.charCodeAt(0)),f=new Float32Array(arr.buffer,arr.byteOffset,Math.floor(arr.byteLength/4));let lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];for(let i=0;i<f.length;i+=3)for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],f[i+a]);hi[a]=Math.max(hi[a],f[i+a])}S.mesh={f,lo,hi,yaw:.62,pitch:1.02,zoom:fitZoom(lo,hi),dims:data.dims,data};$('viewEmpty').hidden=true;$('viewHint').hidden=false;$('resetView').hidden=false;$('viewTitle').textContent=data.name;const shown=data.facets>f.length/9?t('view.shown',{n:Number(f.length/9).toLocaleString(locale())}):'';$('viewMeta').textContent=t('view.meta',{dims:data.dims.map(v=>fmt(v)).join(' × '),facets:Number(data.facets).toLocaleString(locale())})+shown;renderMesh()}
+/* WebGL draws the part with a depth buffer on #viewGl, over the 2D canvas that keeps the bed,
+   grid, axes, shadow and labels. Same projection and shading as the 2D code in renderMesh(),
+   which still draws the part when WebGL is missing, turned off in the settings, lost or failing. */
+const GL={ctx:null,prog:null,mesh:null,failed:false};
+function glUsable(){if(GL.failed||S.config.gpu_preview===false)return null;try{if(!GL.ctx){const c=$('viewGl');GL.ctx=c.getContext('webgl',{antialias:true});if(!GL.ctx){GL.failed=true;return null}c.addEventListener('webglcontextlost',e=>{e.preventDefault();GL.prog=null;GL.mesh=null});c.addEventListener('webglcontextrestored',()=>renderMesh())}return GL.ctx.isContextLost()?null:GL.ctx}catch(e){GL.failed=true;return null}}
+// Facets to ask the plugin for: 0 means its full preview limit; the 2D fallback draws 30 000 at most.
+function previewBudget(){return glUsable()?0:30000}
+function glClear(){const gl=GL.ctx;if(gl&&!gl.isContextLost()){gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT)}}
+function glProgram(gl){const vs='attribute vec3 p;attribute vec3 n;uniform mat3 R;uniform vec3 C;uniform vec4 V;uniform float D;varying float k;varying float rim;void main(){vec3 q=R*(p-C);vec3 m=R*n;k=.32+.68*abs(dot(m,normalize(vec3(.35,-.55,.76))));rim=pow(1.-abs(m.z),3.);gl_Position=vec4((V.x+q.x*V.z)*2.-1.,1.-(V.y+q.y*V.w)*2.,-q.z/D,1.);}',
+ fs='precision mediump float;uniform vec3 A;uniform vec3 B;varying float k;varying float rim;void main(){gl_FragColor=vec4(min((A*k+vec3(40.,40.,48.)*rim+B)/255.,1.),1.);}';
+ const sh=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s};
+ const prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(prog);if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(prog));
+ const loc={p:gl.getAttribLocation(prog,'p'),n:gl.getAttribLocation(prog,'n')};for(const u of ['R','C','V','D','A','B'])loc[u]=gl.getUniformLocation(prog,u);return {prog,loc,pos:gl.createBuffer(),nrm:gl.createBuffer()}}
+function glUpload(gl,m){const f=m.f,nrm=new Float32Array(f.length);for(let i=0;i+8<f.length;i+=9){const ux=f[i+3]-f[i],uy=f[i+4]-f[i+1],uz=f[i+5]-f[i+2],vx=f[i+6]-f[i],vy=f[i+7]-f[i+1],vz=f[i+8]-f[i+2];let x=uy*vz-uz*vy,y=uz*vx-ux*vz,z=ux*vy-uy*vx;const l=Math.hypot(x,y,z)||1;x/=l;y/=l;z/=l;for(let j=0;j<9;j+=3){nrm[i+j]=x;nrm[i+j+1]=y;nrm[i+j+2]=z}}
+ gl.bindBuffer(gl.ARRAY_BUFFER,GL.prog.pos);gl.bufferData(gl.ARRAY_BUFFER,f,gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,GL.prog.nrm);gl.bufferData(gl.ARRAY_BUFFER,nrm,gl.STATIC_DRAW);GL.mesh=m}
+function glDraw(m,v){// While the browser restores a lost context, draw nothing rather than a large mesh in 2D.
+ if(GL.ctx&&GL.ctx.isContextLost()&&!GL.failed&&S.config.gpu_preview!==false)return true;const gl=glUsable();if(!gl)return false;try{const c=$('viewGl'),W=Math.round(v.w*v.dpr),H=Math.round(v.h*v.dpr);if(c.width!==W||c.height!==H){c.width=W;c.height=H}
+ if(!GL.prog)GL.prog=glProgram(gl);if(GL.mesh!==m)glUpload(gl,m);const P=GL.prog,L=P.loc;gl.viewport(0,0,W,H);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LESS);gl.useProgram(P.prog);
+ gl.bindBuffer(gl.ARRAY_BUFFER,P.pos);gl.enableVertexAttribArray(L.p);gl.vertexAttribPointer(L.p,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,P.nrm);gl.enableVertexAttribArray(L.n);gl.vertexAttribPointer(L.n,3,gl.FLOAT,false,0,0);
+ // Columns of rot() in renderMesh(): a turn about Z by the yaw, then about X by the pitch.
+ gl.uniformMatrix3fv(L.R,false,[v.cyw,v.cp*v.syw,v.sp*v.syw,-v.syw,v.cp*v.cyw,v.sp*v.cyw,0,-v.sp,v.cp]);gl.uniform3f(L.C,v.cx,v.cy,v.z0);gl.uniform4f(L.V,v.ox/v.w,v.oy/v.h,v.scale/v.w,v.scale/v.h);
+ gl.uniform1f(L.D,Math.hypot(m.hi[0]-m.lo[0],m.hi[1]-m.lo[1],m.hi[2]-m.lo[2])+1);gl.uniform3f(L.A,v.rgb[0],v.rgb[1],v.rgb[2]);gl.uniform3f(L.B,v.dark?14:0,v.dark?14:0,v.dark?18:0);
+ gl.drawArrays(gl.TRIANGLES,0,Math.floor(m.f.length/3));const err=gl.getError();if(err&&err!==gl.CONTEXT_LOST_WEBGL)throw new Error('WebGL error '+err);return true}
+ catch(e){console.warn('PlatePilot: the WebGL preview failed, drawing in 2D',e);GL.failed=true;glClear();
+ // A full preview is too heavy for the 2D canvas: ask for the simplified one.
+ if(m.f.length/9>30000&&S.previewIndex>=0)setTimeout(()=>send('preview_part',{index:S.previewIndex,max_facets:previewBudget()}),0);return false}}
+function drawMesh(data){if(!data||!data.vertices){S.mesh=null;drawEmptyView();return}const bin=atob(data.vertices),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const f=new Float32Array(arr.buffer,0,arr.length>>2);let lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];for(let i=0;i<f.length;i+=3)for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],f[i+a]);hi[a]=Math.max(hi[a],f[i+a])}S.mesh={f,lo,hi,yaw:.62,pitch:1.02,zoom:fitZoom(lo,hi),dims:data.dims,data};$('viewEmpty').hidden=true;$('viewHint').hidden=false;$('resetView').hidden=false;$('viewTitle').textContent=data.name;const shown=data.facets>f.length/9?t('view.shown',{n:Number(f.length/9).toLocaleString(locale())}):'';$('viewMeta').textContent=t('view.meta',{dims:data.dims.map(v=>fmt(v)).join(' × '),facets:Number(data.facets).toLocaleString(locale())})+shown;renderMesh()}
 function renderMesh(){const m=S.mesh,c=$('view');if(!m)return;const dpr=window.devicePixelRatio||1,w=Math.max(1,c.clientWidth),h=Math.max(1,c.clientHeight);c.width=w*dpr;c.height=h*dpr;const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
 const bx=Number(S.profile?.size?.x)||250,by=Number(S.profile?.size?.y)||250,f=m.f,cx=(m.lo[0]+m.hi[0])/2,cy=(m.lo[1]+m.hi[1])/2,z0=m.lo[2];
 const cyw=Math.cos(m.yaw),syw=Math.sin(m.yaw),cp=Math.cos(m.pitch),sp=Math.sin(m.pitch);
@@ -610,15 +650,15 @@ for(let y=-by/2;y<=by/2+.01;y+=10){const major=Math.abs((y+by/2)%50)<.01;ctx.str
 ctx.beginPath();bed.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();ctx.strokeStyle=`rgba(${ar},${ag},${ab},.85)`;ctx.lineWidth=1.6;ctx.stroke();
 const origin=P(rot(-bx/2,-by/2,0)),ax=P(rot(-bx/2+Math.min(40,bx/5),-by/2,0)),ay=P(rot(-bx/2,-by/2+Math.min(40,by/5),0));ctx.lineWidth=2.2;ctx.strokeStyle='#e5484d';ctx.beginPath();ctx.moveTo(...origin);ctx.lineTo(...ax);ctx.stroke();ctx.strokeStyle='#30a46c';ctx.beginPath();ctx.moveTo(...origin);ctx.lineTo(...ay);ctx.stroke();
 const hx=(m.hi[0]-m.lo[0])/2,hy=(m.hi[1]-m.lo[1])/2,shadow=[[-hx,-hy,0],[hx,-hy,0],[hx,hy,0],[-hx,hy,0]].map(p=>P(rot(...p)));ctx.beginPath();shadow.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();ctx.fillStyle='rgba(0,0,0,.13)';ctx.filter='blur(6px)';ctx.fill();ctx.filter='none';
-const L=[.35,-.55,.76],ln=Math.hypot(...L),lx=L[0]/ln,ly=L[1]/ln,lz=L[2]/ln,tris=[];
+if(!glDraw(m,{w,h,dpr,ox,oy,scale,cyw,syw,cp,sp,cx,cy,z0,dark,rgb:[ar,ag,ab]})){const L=[.35,-.55,.76],ln=Math.hypot(...L),lx=L[0]/ln,ly=L[1]/ln,lz=L[2]/ln,tris=[];
 for(let i=0;i+8<f.length;i+=9){const a=rot(f[i]-cx,f[i+1]-cy,f[i+2]-z0),b=rot(f[i+3]-cx,f[i+4]-cy,f[i+5]-z0),d=rot(f[i+6]-cx,f[i+7]-cy,f[i+8]-z0);const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=d[0]-a[0],vy=d[1]-a[1],vz=d[2]-a[2];let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const nl=Math.hypot(nx,ny,nz)||1;nx/=nl;ny/=nl;nz/=nl;const lit=Math.abs(nx*lx+ny*ly+nz*lz);tris.push({a:P(a),b:P(b),d:P(d),z:a[2]+b[2]+d[2],k:.32+.68*lit,rim:Math.pow(1-Math.abs(nz),3)})}
-tris.sort((p,q)=>p.z-q.z);for(const tr of tris){const k=tr.k,r=Math.min(255,ar*k+40*tr.rim+(dark?14:0)),g=Math.min(255,ag*k+40*tr.rim+(dark?14:0)),b=Math.min(255,ab*k+48*tr.rim+(dark?18:0));ctx.beginPath();ctx.moveTo(...tr.a);ctx.lineTo(...tr.b);ctx.lineTo(...tr.d);ctx.closePath();ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fill();ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=.5;ctx.stroke()}
+tris.sort((p,q)=>p.z-q.z);for(const tr of tris){const k=tr.k,r=Math.min(255,ar*k+40*tr.rim+(dark?14:0)),g=Math.min(255,ag*k+40*tr.rim+(dark?14:0)),b=Math.min(255,ab*k+48*tr.rim+(dark?18:0));ctx.beginPath();ctx.moveTo(...tr.a);ctx.lineTo(...tr.b);ctx.lineTo(...tr.d);ctx.closePath();ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fill();ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=.5;ctx.stroke()}}
 ctx.fillStyle=dark?'rgba(255,255,255,.55)':'rgba(30,40,50,.55)';ctx.font='11px system-ui,sans-serif';ctx.textAlign='right';ctx.fillText(`${fmt(bx)} × ${fmt(by)} ${t('unit.mm')}`,w-12,h-12)}
 
 /* plan */
-function renderPlan(plan){S.plan=plan;updateActions();if(!plan){$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);$('summary').innerHTML=pills.join('');
+function renderPlan(plan){S.plan=plan;updateActions();if(!plan){$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);if(plan.smart===true)pills.unshift(`<span class="pill accent">${esc(t('plan.smart'))}</span>`);$('summary').innerHTML=pills.join('');
 $('plates').innerHTML=plan.plates.map((p,pi)=>{const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(bx*by)*100;let grid='';for(let x=50;x<bx;x+=50)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="${by}"/>`;for(let y=50;y<by;y+=50)grid+=`<line x1="0" y1="${y}" x2="${bx}" y2="${y}"/>`;const items=p.items.map((it,ii)=>{const col=PALETTE[(pi*3+ii)%PALETTE.length],y=by-it.y-it.h,fs=Math.max(5,Math.min(it.w/7,it.h/2.6,13));const label=it.w>22&&it.h>10?`<text x="${it.x+it.w/2}" y="${y+it.h/2}" font-size="${fs}" text-anchor="middle" dominant-baseline="central" fill="currentColor">${esc(it.name.replace(/\.stl$/i,'').slice(0,Math.max(3,Math.floor(it.w/fs*1.7))))}</text>`:'';return `<g><title>${esc(it.name)} · ${fmt(it.w)} × ${fmt(it.h)} ${esc(t('unit.mm'))}${(it.angle||it.rotated)?esc(t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360})):''}</title><rect x="${it.x}" y="${y}" width="${it.w}" height="${it.h}" rx="2.5" fill="${col}" fill-opacity=".26" stroke="${col}" stroke-width="1.2"/>${label}</g>`}).join('');return `<div class="plate"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)}))}</span></div><svg viewBox="-2 -2 ${bx+4} ${by+4}"><rect x="0" y="0" width="${bx}" height="${by}" rx="4" fill="var(--surface-2)" stroke="var(--accent-line)" stroke-width="1.2"/><g stroke="var(--line)" stroke-width=".6">${grid}</g>${items}</svg></div>`}).join('')}
-function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('plan').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
+function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
 
 /* wiring */
 $('openSettings').onclick=()=>openDrawer(true);$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
@@ -630,12 +670,14 @@ $('filePick').onchange=()=>{const files=Array.from($('filePick').files||[]);if(f
 $('scan').onclick=requestScan;$('filter').oninput=renderArchives;$('markSeen').onclick=()=>send('mark_seen');
 document.querySelectorAll('#kindChips .chip').forEach(b=>b.onclick=()=>{S.kind=b.dataset.kind;document.querySelectorAll('#kindChips .chip').forEach(x=>x.classList.toggle('on',x===b));renderArchives()});
 for(const id of ['checkOnOpen','recursive'])$(id).onchange=saveUiSettings;
+$('gpuPreview').onchange=()=>{saveUiSettings();glClear();if(S.mesh&&S.previewIndex>=0)send('preview_part',{index:S.previewIndex,max_facets:previewBudget()});else renderMesh()};
 for(const id of ['modelStl','modelStep','model3mf'])$(id).onchange=()=>{$(id).parentElement.classList.toggle('on',$(id).checked);saveUiSettings()};
 $('language').onchange=()=>{saveUiSettings();send('init')};
 $('margin').onchange=()=>{invalidatePlan();saveUiSettings()};
 $('all').onclick=()=>{S.parts.forEach(p=>{if(p.filetype==='stl'&&p.member&&!p.blocked)p.included=true});invalidatePlan();renderParts()};$('none').onclick=()=>{S.parts.forEach(p=>p.included=false);invalidatePlan();renderParts()};
 document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
 $('plan').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,included:selectedStl().map(p=>p.member)})};
+$('planSmart').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,included:selectedStl().map(p=>p.member),smart:true})};
 $('sendPrepare').onclick=()=>{if(!S.busy){status(t('st.building'));send('export_project')}};
 $('nativeArrange').onclick=()=>{if(!S.busy)send('native_arrange',{included:selectedStl().map(p=>p.member)})};
 $('modalYes').onclick=()=>finishAsk(true);$('modalNo').onclick=()=>finishAsk(false);
@@ -1060,23 +1102,29 @@ def _app_version():
     return match.group(0) if match else "2.5.0"
 
 
-def _binary_stl_info(raw, include_preview=False):
+def _binary_stl_info(raw, include_preview=False, max_facets=None):
     if len(raw) < 84:
         raise ValueError(_t("err.stl_short"))
     count = struct.unpack_from("<I", raw, 80)[0]
     if count > 2_000_000 or 84 + count * 50 != len(raw):
-        return _ascii_stl_info(raw, include_preview)
+        return _ascii_stl_info(raw, include_preview, max_facets)
     if not count:
         raise ValueError(_t("err.stl_vertices"))
     lo, hi = _binary_bounds(raw, count)
     if lo is None:
         raise ValueError(_t("err.stl_coords"))
     dims = [round(hi[i] - lo[i], 3) for i in range(3)]
-    vertices = _preview_vertices(lambda: _iter_stl_triangles(raw), count, lo, hi) if include_preview else None
+    limit = max_facets or MAX_PREVIEW_FACETS
+    if include_preview and count <= limit:
+        # Every facet: its nine corner floats are bytes 12 to 48 of each 50-byte record.
+        view = memoryview(raw)
+        vertices = base64.b64encode(b"".join(view[84 + i * 50 + 12:84 + i * 50 + 48] for i in range(count))).decode("ascii")
+    else:
+        vertices = _preview_vertices(lambda: _iter_stl_triangles(raw), count, lo, hi, limit) if include_preview else None
     return {"facets": count, "dims": dims, "vertices": vertices}
 
 
-def _ascii_stl_info(raw, include_preview=False):
+def _ascii_stl_info(raw, include_preview=False, max_facets=None):
     text = raw.decode("utf-8", "replace")
     verts = []
     for match in re.finditer(r"\bvertex\s+([-+\d.eE]+)\s+([-+\d.eE]+)\s+([-+\d.eE]+)", text, re.I):
@@ -1089,7 +1137,7 @@ def _ascii_stl_info(raw, include_preview=False):
     lo = [min(verts[axis::3]) for axis in range(3)]
     hi = [max(verts[axis::3]) for axis in range(3)]
     triangles = [tuple(verts[i:i + 9]) for i in range(0, len(verts) - 8, 9)]
-    vertices = _preview_vertices(lambda: iter(triangles), len(triangles), lo, hi) if include_preview and triangles else None
+    vertices = _preview_vertices(lambda: iter(triangles), len(triangles), lo, hi, max_facets) if include_preview and triangles else None
     return {"facets": facets or len(verts) // 9, "dims": [round(hi[i] - lo[i], 3) for i in range(3)], "vertices": vertices}
 
 
@@ -1121,8 +1169,9 @@ def _binary_bounds(raw, count):
     return lo, hi
 
 
-def _preview_vertices(triangles, count, lo, hi):
-    """Base64 float32 corners for the page's preview, at most MAX_PREVIEW_FACETS triangles.
+def _preview_vertices(triangles, count, lo, hi, limit=None):
+    """Base64 float32 corners for the page's preview, at most `limit` triangles
+    (MAX_PREVIEW_FACETS by default).
 
     A larger part is simplified as a whole by vertex clustering: corners are snapped to a
     cubic grid, the corners in each cell merge into their average, and triangles that collapse
@@ -1131,22 +1180,23 @@ def _preview_vertices(triangles, count, lo, hi):
     projects always get every facet of the part. `triangles` returns a new iterator over the
     count triangles for each pass, so a large part is never held as a list of facets.
     """
-    if count <= MAX_PREVIEW_FACETS:
+    limit = limit or MAX_PREVIEW_FACETS
+    if count <= limit:
         flat = [value for t in triangles() for value in t]
     else:
         span = max(hi[axis] - lo[axis] for axis in range(3)) or 1.0
         # About 0.65·√N cells along the longest side keep most parts under N in one pass;
         # flat or thin parts come out much smaller, so they get a finer grid once.
-        cells = int(math.sqrt(MAX_PREVIEW_FACETS) * 0.65)
+        cells = int(math.sqrt(limit) * 0.65)
         flat = _cluster_triangles(triangles(), lo, span / cells)
-        if len(flat) // 9 < MAX_PREVIEW_FACETS // 3:
+        if len(flat) // 9 < limit // 3:
             finer = _cluster_triangles(triangles(), lo, span / (cells * 1.6))
-            if len(finer) // 9 <= MAX_PREVIEW_FACETS:
+            if len(finer) // 9 <= limit:
                 flat = finer
-        while len(flat) // 9 > MAX_PREVIEW_FACETS and cells > 4:
-            cells = max(4, int(cells * math.sqrt(MAX_PREVIEW_FACETS * 9 / len(flat)) * 0.95))
+        while len(flat) // 9 > limit and cells > 4:
+            cells = max(4, int(cells * math.sqrt(limit * 9 / len(flat)) * 0.95))
             flat = _cluster_triangles(triangles(), lo, span / cells)
-        flat = flat[:MAX_PREVIEW_FACETS * 9]
+        flat = flat[:limit * 9]
     return base64.b64encode(struct.pack("<%sf" % len(flat), *flat)).decode("ascii")
 
 
@@ -1654,6 +1704,226 @@ def _pack(parts, bed_x, bed_y, margin):
     return {"plates": best["plates"], "problems": best["problems"], "bed": {"x": usable_x, "y": usable_y}, "total": len(items)}
 
 
+def _split_free_rects(free_rects, used):
+    """MaxRects step for _pack_smart: free rectangles left after placing `used`, without the ones
+    inside another (the same split as in _pack, kept apart so _pack stays as it is)."""
+    ux, uy, uw, uh = used
+    out = []
+    for fx, fy, fw, fh in free_rects:
+        if ux >= fx + fw or ux + uw <= fx or uy >= fy + fh or uy + uh <= fy:
+            out.append((fx, fy, fw, fh))
+            continue
+        if ux > fx:
+            out.append((fx, fy, ux - fx, fh))
+        if ux + uw < fx + fw:
+            out.append((ux + uw, fy, fx + fw - (ux + uw), fh))
+        if uy > fy:
+            out.append((fx, fy, fw, uy - fy))
+        if uy + uh < fy + fh:
+            out.append((fx, uy + uh, fw, fy + fh - (uy + uh)))
+    out = [r for r in out if r[2] > 1e-6 and r[3] > 1e-6]
+    clean = []
+    for i, (x, y, w, h) in enumerate(out):
+        inside = any(j != i and x >= ox - 1e-6 and y >= oy - 1e-6 and x + w <= ox + ow + 1e-6 and y + h <= oy + oh + 1e-6
+                     and ((x, y, w, h) != (ox, oy, ow, oh) or j < i)
+                     for j, (ox, oy, ow, oh) in enumerate(out))
+        if not inside:
+            clean.append((x, y, w, h))
+    return clean
+
+
+def _place_from_centre(items, bed_x, bed_y, edge, gap):
+    """Place every item on one plate as close to the bed centre as the free space allows.
+
+    Items are (w, h) footprints with at least `gap` between them and `edge` from the bed sides.
+    Each one goes, in the given order and in either orientation, to the spot of a free
+    rectangle nearest the centre (the free rectangles are maximal, so any spot inside one is
+    free); of spots as near, the one that keeps the group most compact, so equal parts form a
+    block rather than a row. Returns [(x, y, w, h, rotated)] in bed coordinates, or None if an
+    item does not fit.
+    """
+    width, height = bed_x - 2 * edge + gap, bed_y - 2 * edge + gap
+    if width <= 0 or height <= 0:
+        return None
+    free = [(0.0, 0.0, width, height)]
+    cx, cy = bed_x / 2 - edge, bed_y / 2 - edge
+    placed = []
+    box = None
+    for w0, h0 in items:
+        best = None
+        for w, h, rotated in ((w0, h0, False), (h0, w0, True)):
+            iw, ih = w + gap, h + gap
+            for fx, fy, fw, fh in free:
+                if iw > fw + 1e-6 or ih > fh + 1e-6:
+                    continue
+                # The spot of this rectangle whose part centre is nearest the bed centre.
+                x = min(max(cx - w / 2, fx), fx + fw - iw)
+                y = min(max(cy - h / 2, fy), fy + fh - ih)
+                grown = (x, y, x + iw, y + ih) if box is None else (min(box[0], x), min(box[1], y), max(box[2], x + iw), max(box[3], y + ih))
+                side = max(grown[2] - grown[0], grown[3] - grown[1])
+                key = (round((x + w / 2 - cx) ** 2 + (y + h / 2 - cy) ** 2, 3), round(side, 3), (fw - iw) * (fh - ih), rotated)
+                if best is None or key < best[0]:
+                    best = (key, x, y, w, h, rotated, grown)
+        if best is None:
+            return None
+        _, x, y, w, h, rotated, box = best
+        free = _split_free_rects(free, (x, y, w + gap, h + gap))
+        placed.append((edge + x, edge + y, w, h, rotated))
+    return placed
+
+
+def _centred(placed, bed_x, bed_y):
+    """The layout moved so that the bounding box of its parts is in the middle of the bed."""
+    lo_x = min(p[0] for p in placed)
+    lo_y = min(p[1] for p in placed)
+    hi_x = max(p[0] + p[2] for p in placed)
+    hi_y = max(p[1] + p[3] for p in placed)
+    dx, dy = (bed_x - lo_x - hi_x) / 2, (bed_y - lo_y - hi_y) / 2
+    return [(x + dx, y + dy, w, h, r) for x, y, w, h, r in placed]
+
+
+def _edge_clearance(placed, bed_x, bed_y):
+    return min(min(p[0], p[1], bed_x - p[0] - p[2], bed_y - p[1] - p[3]) for p in placed)
+
+
+def _centre_priority(w, h, z):
+    """How much a part needs the middle of the bed: more for a small footprint and for a part
+    tall for its footprint, which holds on worst and suffers most from the cooler edges."""
+    side = math.sqrt(max(w * h, 1.0))
+    return (1.0 + max(z, 0.0) / side) / side
+
+
+def _centre_score(placed, weights, bed_x, bed_y):
+    """Mean distance of the part centres from the bed centre, weighted by _centre_priority."""
+    total = sum(weight * math.hypot(x + w / 2 - bed_x / 2, y + h / 2 - bed_y / 2) for (x, y, w, h, _), weight in zip(placed, weights))
+    return total / sum(weights)
+
+
+def _smart_plate(items, bed_x, bed_y, margin):
+    """The best centred layout of one plate's items, or None if it cannot be found.
+
+    Several item orders are tried (the parts that need the middle most first, small or large
+    first, alternating); the gap between parts is then widened step by step while the parts
+    stay at least as far from the bed sides as with the plain gap, up to 10 mm. Layouts are
+    compared by that distance from the sides, then by how close the parts are to the centre,
+    weighted by _centre_priority (small and tall parts count most).
+    """
+    sizes = [(it["w"], it["h"]) for it in items]
+    weights = [_centre_priority(w, h, it["z"]) for (w, h), it in zip(sizes, items)]
+    by_area = sorted(range(len(items)), key=lambda i: sizes[i][0] * sizes[i][1])
+    alternating = []
+    low, high = 0, len(by_area) - 1
+    while low <= high:
+        alternating.append(by_area[high])
+        if low != high:
+            alternating.append(by_area[low])
+        low, high = low + 1, high - 1
+    orders = [sorted(range(len(items)), key=lambda i: -weights[i]), list(reversed(by_area)), by_area, alternating,
+              sorted(range(len(items)), key=lambda i: -max(sizes[i]))]
+
+    def layout(order, gap):
+        placed = _place_from_centre([sizes[i] for i in order], bed_x, bed_y, margin, gap)
+        if placed is None:
+            return None
+        placed = _centred(placed, bed_x, bed_y)
+        by_item = [None] * len(items)
+        for index, spot in zip(order, placed):
+            by_item[index] = spot
+        return by_item
+
+    def score(placed):
+        return (-round(min(_edge_clearance(placed, bed_x, bed_y), 10.0), 1), _centre_score(placed, weights, bed_x, bed_y))
+
+    best = None
+    for order in orders:
+        placed = layout(order, margin)
+        if placed is not None and (best is None or score(placed) < score(best)):
+            best = placed
+    if best is None:
+        return None
+    wanted = min(_edge_clearance(best, bed_x, bed_y), 10.0) - 0.05
+    for extra in range(1, int(min(margin, 6.0)) + 1):
+        wider = None
+        for order in orders:
+            placed = layout(order, margin + extra)
+            if placed is not None and _edge_clearance(placed, bed_x, bed_y) >= wanted and (wider is None or score(placed) < score(wider)):
+                wider = placed
+        if wider is None:
+            break
+        best = wider
+    return best
+
+
+def _pack_smart(parts, bed_x, bed_y, margin):
+    """Smart layout (beta): as many plates as _pack needs, with the parts of each plate in a
+    centred group, small parts nearer the middle, away from the bed sides, evenly spaced, and
+    the plates filled about evenly. A plate too full for that gets _pack's dense layout, moved to
+    the middle. The result has the same form as _pack's, plus "smart": True, or "fallback" when
+    some parts do not fit and _pack's result is returned as it is."""
+    base = _pack(parts, bed_x, bed_y, margin)
+    if base["problems"] or not base["plates"]:
+        return dict(base, smart="fallback")
+    gap = max(0.0, margin)
+    items = [it for plate in base["plates"] for it in plate["items"]]
+    # Footprints as the part lies before any 90° turn; _place_from_centre picks the orientation.
+    for it in items:
+        it["fw"], it["fh"] = (it["h"], it["w"]) if it["rotated"] else (it["w"], it["h"])
+    plate_count = len(base["plates"])
+
+    def unturned(group):
+        return [dict(it, w=it["fw"], h=it["fh"]) for it in group]
+
+    # Even plates: largest parts first, each onto the least filled plate it still fits on.
+    balanced = [[] for _ in range(plate_count)]
+    for it in sorted(items, key=lambda it: -it["w"] * it["h"]):
+        loads = sorted(range(plate_count), key=lambda i: (sum(o["w"] * o["h"] for o in balanced[i]), i))
+        for i in loads:
+            if _place_from_centre([(o["fw"], o["fh"]) for o in balanced[i] + [it]], bed_x, bed_y, gap, gap) is not None:
+                balanced[i].append(it)
+                break
+        else:
+            balanced = None
+            break
+
+    def row(it, x, y, w, h, turned):
+        return {"name": it["name"], "x": x, "y": y, "w": w, "h": h, "z": it["z"],
+                "rotated": turned, "angle": it["angle"], "member": it.get("member"), "source_dims": it["source_dims"]}
+
+    def dense(group):
+        """A plate too full to lay out from the centre: _pack's dense layout of just this
+        group, moved to the middle of the bed; None if _pack needs more than one plate for it."""
+        own = _pack([{"name": it["name"], "member": it.get("member"), "dims": [it["fw"], it["fh"], it["z"]],
+                      "source_dims": it["source_dims"], "angle": it["angle"]} for it in group], bed_x, bed_y, gap)
+        if own["problems"] or len(own["plates"]) != 1:
+            return None
+        rows = own["plates"][0]["items"]
+        spots = _centred([(r["x"], r["y"], r["w"], r["h"], r["rotated"]) for r in rows], bed_x, bed_y)
+        return [dict(r, x=x, y=y) for r, (x, y, _, _, _) in zip(rows, spots)]
+
+    def build(groups, last_resort):
+        """Plates for these groups of items, or None if a group fits neither way on one plate;
+        with last_resort (the groups of _pack's plates) such a plate keeps _pack's layout, centred."""
+        plates = []
+        for group in groups:
+            placed = _smart_plate(unturned(group), bed_x, bed_y, gap)
+            if placed is not None:
+                rows = [row(it, *spot) for it, spot in zip(group, placed)]
+            else:
+                rows = dense(group)
+                if rows is None:
+                    if not last_resort:
+                        return None
+                    spots = _centred([(it["x"], it["y"], it["w"], it["h"], it["rotated"]) for it in group], bed_x, bed_y)
+                    rows = [row(it, *spot) for it, spot in zip(group, spots)]
+            plates.append({"items": rows})
+        return plates
+
+    plates = build(balanced, False) if balanced else None
+    if plates is None:
+        plates = build([list(plate["items"]) for plate in base["plates"]], True)
+    return {"plates": plates, "problems": [], "bed": base["bed"], "total": base["total"], "smart": True}
+
+
 def _iter_stl_triangles(raw):
     """Yield every triangle from a validated binary or ASCII STL."""
     if len(raw) >= 84:
@@ -1959,6 +2229,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 folders.append(folder)
         config["folders"] = folders
         config["check_on_open"] = bool(config.get("check_on_open", True))
+        config["gpu_preview"] = bool(config.get("gpu_preview", True))
         if config.get("language") not in ("auto",) + LANGUAGES:
             config["language"] = "auto"
         return config
@@ -2494,7 +2765,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                                    "scan_interrupted": bool(marker) and os.path.exists(marker)})
             elif kind == "save_settings":
                 incoming = data.get("config", {})
-                for key in ("check_on_open", "recursive"):
+                for key in ("check_on_open", "recursive", "gpu_preview"):
                     config[key] = bool(incoming.get(key, config.get(key)))
                 config["margin_mm"] = max(0.0, min(20.0, float(incoming.get("margin_mm", config.get("margin_mm", DEFAULT_MARGIN_MM)))))
                 config["arrange_mode"] = "orca" if incoming.get("arrange_mode") == "orca" else "own"
@@ -2594,14 +2865,17 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                         raise ValueError(_t("err.stl_outside"))
                     with open(member, "rb") as stream:
                         raw = stream.read(MAX_STL_BYTES + 1)
+                # The page asks for fewer facets when it draws without WebGL.
+                limit = max(1000, min(MAX_PREVIEW_FACETS, int(data.get("max_facets") or MAX_PREVIEW_FACETS)))
                 # Simplifying a large part takes about a second, so the last few previews are kept.
                 previews = getattr(self, "_previews", None)
                 if previews is None:
                     previews = self._previews = {}
-                key = hashlib.blake2b(raw, digest_size=16).digest()
-                info = previews.pop(key, None) or _binary_stl_info(raw, include_preview=True)
+                key = (hashlib.blake2b(raw, digest_size=16).digest(), limit)
+                info = previews.pop(key, None) or _binary_stl_info(raw, include_preview=True, max_facets=limit)
                 previews[key] = info
-                while len(previews) > 12:
+                # A full preview of 250 000 facets is 12 MB of text, so the cache is limited by size too.
+                while len(previews) > 1 and (len(previews) > 12 or sum(len(v["vertices"] or "") for v in previews.values()) > 96 * 1024 * 1024):
                     previews.pop(next(iter(previews)))
                 self.post_message({"type": "preview", "name": parts[index]["name"], "facets": info["facets"], "dims": info["dims"], "vertices": info["vertices"]})
             elif kind == "plan":
@@ -2621,13 +2895,13 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     blobs = self._read_stl_blobs(source, all_parts, [p["member"] for p in too_wide])
                     selected = [dict(p, source_dims=p["dims"]) for p in selected]
                     selected = _turn_to_fit(selected, blobs, bed_x, bed_y, margin)
-                result = _pack(selected, bed_x, bed_y, margin)
+                result = _pack_smart(selected, bed_x, bed_y, margin) if data.get("smart") else _pack(selected, bed_x, bed_y, margin)
                 max_z = profile.get("height")
                 too_tall = [p["name"] for p in selected if max_z and p["dims"][2] > max_z]
                 exportable = bool(result["plates"]) and not result["problems"] and not too_tall
                 self.post_message({"type": "plan", "plates": result["plates"], "bed": profile["size"], "profile": profile,
                                    "total": result["total"], "problems": result["problems"], "too_tall": too_tall,
-                                   "exclusions": profile.get("exclusions"), "exportable": exportable})
+                                   "exclusions": profile.get("exclusions"), "exportable": exportable, "smart": result.get("smart", False)})
                 self._last_plan = {"source": source, "plates": result["plates"], "profile": profile, "exportable": exportable}
             elif kind == "export_project":
                 plan = getattr(self, "_last_plan", None)
