@@ -544,6 +544,32 @@ class OrcaPathCheck(unittest.TestCase):
         for path in (r"G:\Download\Новая папка", r"G:\Download\old\config", r"G:\a\Certs\x.zip", r"G:\a\b.ini", "G:\\Download\\蛋.stl"):
             self.assertFalse(pp._orca_can_read(path), path)
 
+    def test_which_orca_handles_non_latin_names(self):
+        for version, fixed in (("2.5.0", True), ("2.5.1", True), ("2.6.0-dev", True), ("2.5.0-dev", False),
+                               ("2.5.0-beta", False), ("2.4.2", False), ("", False), (None, False)):
+            self.assertEqual(pp._version_handles_non_latin(version), fixed, version)
+
+    def test_orca_2_5_0_lists_non_latin_paths_and_still_refuses_secret_names(self):
+        saved = getattr(pp.orca.host, "app_info", None)
+        pp.orca.host.app_info = lambda: {"version": "2.5.0"}
+        pp._NON_LATIN_OK.clear()
+        try:
+            for path in (r"G:\Download\Новая папка", "G:\\Download\\蛋.stl"):
+                self.assertTrue(pp._orca_can_read(path), path)
+            for path in (r"G:\Download\Новая папка\config", r"G:\a\Certs\x.zip", r"G:\a\b.ini"):
+                self.assertFalse(pp._orca_can_read(path), path)
+            with tempfile.TemporaryDirectory() as root:
+                root = os.path.realpath(root)
+                write_tree(root, {"Новая папка/b.stl": b"x"})
+                rows, _, skipped = pp._scan_folder(root)
+            self.assertEqual((skipped, [r["name"] for r in rows]), (0, ["Новая папка"]))
+        finally:
+            pp._NON_LATIN_OK.clear()
+            if saved is None:
+                del pp.orca.host.app_info
+            else:
+                pp.orca.host.app_info = saved
+
     def test_scan_does_not_enter_folders_orca_cannot_check(self):
         with tempfile.TemporaryDirectory() as root:
             root = os.path.realpath(root)

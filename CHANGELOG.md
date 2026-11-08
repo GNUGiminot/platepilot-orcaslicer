@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.3
+
+- **Folders and files with Cyrillic or other non-Latin names on OrcaSlicer 2.5.0 and later.** Orca's plugin permission check used to break on such names (the plugin call hung and Orca could crash), so PlatePilot skipped them. Our fix for that, OrcaSlicer#16925, is in the 2.5.0 release, so there they are listed, opened and watched like any other. Older 2.5 builds (2.5.0-dev, betas) keep the old protection. Folders named config, cert or secret are still refused: Orca refuses them on purpose.
+
 ## 0.6.2
 
 - **Folder switch in the library.** With two or more watched folders (or one plus the files added to PlatePilot), a list under the search shows the sources of one folder only, with how many each holds. It works together with All, New, ZIP, Folders and Added, and the search.

@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.6.2"
+# version = "0.6.3"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -26,7 +26,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.6.2"
+VERSION = "0.6.3"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -244,9 +244,10 @@ STRINGS = {
     "err.archive_outside": ("the archive must be inside a watched folder", "архив должен находиться в выбранной папке"),
     "err.folder_outside": ("the model folder must be inside a watched folder", "папка модели должна находиться внутри отслеживаемой папки"),
     "warn.stl_only": ("{type}: preview and layout work with STL only", "{type}: просмотр и раскладка доступны только для STL"),
-    "warn.unsafe_name": ("name with non-Latin letters: Orca cannot open it for plugins yet, drag it into PlatePilot", "имя с нелатинскими буквами: Orca пока не даёт плагинам открыть его — перетащите в PlatePilot"),
-    "err.unsafe_path": ("{path}: Orca 2.5 cannot open paths with non-Latin letters, or with a folder named config, cert or secret, for plugins yet. Drag the files into PlatePilot or rename the folder.",
-                        "{path}: Orca 2.5 пока не даёт плагинам открывать пути с нелатинскими буквами или с папкой config, cert, secret. Перетащите файлы в PlatePilot или переименуйте папку."),
+    "warn.unsafe_name": ("name with non-Latin letters: this Orca build cannot open it for plugins (OrcaSlicer 2.5.0 can); drag it into PlatePilot",
+                         "имя с нелатинскими буквами: эта сборка Orca не даёт плагинам открыть его (OrcaSlicer 2.5.0 даёт) — перетащите в PlatePilot"),
+    "err.unsafe_path": ("{path}: Orca does not let plugins open paths with a folder named config, cert or secret, and builds before OrcaSlicer 2.5.0 none with non-Latin letters. Drag the files into PlatePilot or rename the folder.",
+                        "{path}: Orca не даёт плагинам открывать пути с папкой config, cert, secret, а сборки до OrcaSlicer 2.5.0 — и пути с нелатинскими буквами. Перетащите файлы в PlatePilot или переименуйте папку."),
     "st.no_answer": ("The plugin did not answer. Press Refresh to try again.", "Плагин не ответил. Нажмите «Обновить», чтобы попробовать ещё раз."),
     "st.scan_interrupted": ("The last folder check did not finish (Orca was closed), so it was not repeated automatically. Press Refresh to check the folders.",
                             "Прошлая проверка папок не завершилась (Orca закрылась), поэтому автоматически она не повторялась. Нажмите «Обновить», чтобы проверить папки."),
@@ -1312,17 +1313,42 @@ def _fingerprint(path):
     return f"{stat.st_size}:{getattr(stat, 'st_mtime_ns', int(stat.st_mtime * 1e9))}"
 
 
-def _orca_can_read(path):
-    """False for a path that Orca 2.5's plugin permission check cannot handle.
+_NON_LATIN_OK = []   # whether this Orca's permission check copes with non-Latin path names
 
-    That check lowercases every path component byte by byte in the Windows code page, which
-    turns UTF-8 letters outside Latin (Cyrillic, CJK, ...) into invalid UTF-8; converting the
-    result back to a path throws inside Orca's audit hook, so the plugin call never returns and
-    Orca may crash (PluginAuditManager.cpp, is_denied_path_keyword). Components named like a
-    secret, certificate or config are refused by that check on purpose. Such paths are never
-    listed or opened; their files can be dropped into PlatePilot instead.
+
+def _version_handles_non_latin(version):
+    """True for OrcaSlicer 2.5.0 (the release) and later: its permission check keeps non-Latin
+    path names intact (OrcaSlicer#16925, in the release). A 2.5.0-dev or -beta build may be
+    older than that fix, so it counts as not fixed."""
+    match = re.match(r"\s*(\d+)\.(\d+)\.(\d+)(.*)", str(version or ""))
+    if not match:
+        return False
+    numbers = tuple(int(n) for n in match.groups()[:3])
+    return numbers > (2, 5, 0) or (numbers == (2, 5, 0) and not match.group(4).strip())
+
+
+def _orca_handles_non_latin():
+    """Asked once: app_info() answers on the UI thread, where the page's messages arrive."""
+    if not _NON_LATIN_OK:
+        try:
+            version = orca.host.app_info().get("version", "")
+        except Exception:
+            return False
+        _NON_LATIN_OK.append(_version_handles_non_latin(version))
+    return _NON_LATIN_OK[0]
+
+
+def _orca_can_read(path):
+    """False for a path that Orca's plugin permission check cannot handle.
+
+    Before OrcaSlicer 2.5.0 that check lowercased every path component byte by byte in the
+    Windows code page, which turned UTF-8 letters outside Latin (Cyrillic, CJK, ...) into
+    invalid UTF-8; converting the result back to a path threw inside Orca's audit hook, so the
+    plugin call never returned and Orca could crash. Those builds get no such paths: they are
+    never listed or opened, and their files can be dropped into PlatePilot instead. Components
+    named like a secret, certificate or config are refused by every build on purpose.
     """
-    if any(ord(c) > 127 for c in str(path)):
+    if any(ord(c) > 127 for c in str(path)) and not _orca_handles_non_latin():
         return False
     parts = [p.lower() for p in re.split(r"[\\/]+", str(path)) if p]
     return not any(p in DENIED_PATH_NAMES or p.endswith((".conf", ".ini")) for p in parts)
