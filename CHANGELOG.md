@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- **Folder switch in the library.** With two or more watched folders (or one plus the files added to PlatePilot), a list under the search shows the sources of one folder only, with how many each holds. It works together with All, New, ZIP, Folders and Added, and the search.
+
 ## 0.6.1
 
 - The library lists the newest sources first. A file pasted or copied in Explorer keeps its original date, so freshness is the later of the modified and created times: a copy made today comes first.

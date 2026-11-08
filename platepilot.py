@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.6.1"
+# version = "0.6.2"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -26,7 +26,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -164,6 +164,8 @@ STRINGS = {
     "lib.add_folder": ("Drop ZIP or STL files here, or add a folder with models under Folders.", "Перетащите сюда ZIP или STL либо добавьте папку с моделями в «Папках»."),
     "lib.new": ("New", "Новые"),
     "lib.added": ("Added", "Добавленные"),
+    "lib.all_folders": ("All folders", "Все папки"),
+    "lib.folder_tip": ("Show the sources of one folder only", "Показать источники только из одной папки"),
     "lib.other_show": ("{n} more archives whose names don't look like models", "Ещё архивов, не похожих на модели по названию: {n}"),
     "lib.other_hide": ("Hide the archives whose names don't look like models", "Скрыть архивы, не похожие на модели"),
     "lib.other_note": ("PlatePilot judges by the name, because looking inside every archive would make Orca ask about each one. Open an archive to check it: with models it moves up, without them it disappears. Search looks through these too.",
@@ -395,6 +397,7 @@ input[type=number]{width:76px}
 .library{display:flex;flex-direction:column}
 .search{position:relative;margin:0 12px}.search svg{position:absolute;left:10px;top:8px;color:var(--muted)}.search input{width:100%;padding-left:32px}
 .chips{display:flex;gap:6px;padding:9px 12px 10px;flex-wrap:wrap}
+.rootbar{margin:8px 12px 0}.rootbar select{width:100%}
 .chip{height:26px;padding:0 10px;border-radius:999px;font-size:12px;background:transparent}label.chip{display:inline-flex;align-items:center;border:1px solid var(--line);cursor:pointer;user-select:none}.chip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent);font-weight:600}
 .list{overflow:auto;flex:1;padding:0 6px 8px;border-top:1px solid var(--line)}
 .source{display:flex;gap:10px;align-items:flex-start;padding:9px 8px;margin-top:4px;border-radius:var(--r-sm);cursor:pointer;border:1px solid transparent}
@@ -503,6 +506,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
  <section class="card library">
   <div class="card-head"><h2 data-i18n="lib.title">Library</h2><span id="libCount" class="count">0</span></div>
   <div class="search"><svg class="ic"><use href="#i-search"/></svg><input id="filter" data-i18n-ph="lib.search" placeholder="Search by name"></div>
+  <div class="rootbar" id="rootBar" hidden><select id="rootFilter" data-i18n-title="lib.folder_tip" title="Show the sources of one folder only"></select></div>
   <div class="chips" id="kindChips"><button class="chip on" data-kind="all" data-i18n="lib.all">All</button><button class="chip" data-kind="new"><span data-i18n="lib.new">New</span><span id="newCount" class="n"></span></button><button class="chip" data-kind="zip">ZIP</button><button class="chip" data-kind="folder" data-i18n="lib.folders">Folders</button><button id="addedChip" class="chip" data-kind="added" data-i18n="lib.added" hidden>Added</button><button id="markSeen" class="chip ghost end" data-i18n="lib.mark_seen" hidden>Mark all as seen</button></div>
   <div id="archives" class="list"></div>
  </section>
@@ -612,7 +616,11 @@ function setProfile(p){S.profile=p||null;if(!p||p.error){$('printer').innerHTML=
 /* library */
 function kindClass(kind,added){return added?'k-added':kind==='folder'?'k-folder':'k-zip'}
 function sourceRow(a){const badges=a.type_counts?Object.entries(a.type_counts).map(([k,v])=>`<span class="pill">${esc(k)} ${v}</span>`).join(''):`<span class="pill">${esc(t('src.unopened'))}</span>`;return `<div class="source ${S.selected===a.path?'on':''} ${a.likely===false?'other':''}" data-path="${esc(a.path)}" data-kind="${esc(a.kind)}"><div class="glyph ${kindClass(a.kind,a.added)}">${icon(a.kind==='folder'?'models':'zip')}</div><div class="t"><div class="n">${esc(a.name)}</div><div class="m">${a.new?`<span class="pill accent">${esc(t('src.new'))}</span>`:''}${a.added?`<span class="pill">${esc(t('src.added'))}</span>`:''}${badges}<span class="pill">${esc(a.size)}</span>${a.warning?`<span class="pill warn">${esc(a.warning)}</span>`:''}</div></div></div>`}
-function renderArchives(){const q=$('filter').value.trim().toLowerCase();const match=x=>S.kind==='all'||(S.kind==='new'?x.new:S.kind==='added'?x.added:x.kind===S.kind);const found=S.archives.filter(x=>x.name.toLowerCase().includes(q)&&match(x));
+// The folder switch: every watched folder and PlatePilot's own folder of added files, when there are two or more.
+function renderRoots(){const roots=(S.folders||[]).filter(f=>f.path),sel=$('rootFilter');if(S.root&&!roots.some(f=>f.path===S.root))S.root='';
+ $('rootBar').hidden=roots.length<2;if(roots.length<2)return;const n=p=>S.archives.filter(x=>x.root===p&&x.likely!==false).length,base=p=>p.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||p;
+ sel.innerHTML=`<option value="">${esc(t('lib.all_folders'))} (${S.archives.filter(x=>x.likely!==false).length})</option>`+roots.map(f=>`<option value="${esc(f.path)}" title="${esc(f.path)}"${f.path===S.root?' selected':''}>${esc(f.origin==='added'?t('folders.added'):base(f.path))} (${n(f.path)})</option>`).join('');sel.value=S.root||''}
+function renderArchives(){const q=$('filter').value.trim().toLowerCase();renderRoots();const match=x=>(!S.root||x.root===S.root)&&(S.kind==='all'||(S.kind==='new'?x.new:S.kind==='added'?x.added:x.kind===S.kind));const found=S.archives.filter(x=>x.name.toLowerCase().includes(q)&&match(x));
  /* a search looks through everything; otherwise archives whose names don't look like models wait in a collapsed group */
  const main=q?found:found.filter(x=>x.likely!==false),rest=q?[]:found.filter(x=>x.likely===false);const fresh=S.archives.filter(x=>x.new).length;
  $('libCount').textContent=S.archives.filter(x=>x.likely!==false).length;$('newCount').textContent=fresh||'';$('addedChip').hidden=!S.archives.some(x=>x.added)&&S.kind!=='added';$('markSeen').hidden=!fresh||S.kind!=='new';
@@ -707,7 +715,7 @@ $('pickFolder').onclick=()=>{if(S.busy)return;S.scanning=true;status(t('st.openi
 $('addFolder').onclick=()=>{const path=$('folder').value.trim();if(path&&!S.busy){S.scanning=true;setBusy(true);send('request_folder_add',{path})}};$('folder').onkeydown=e=>{if(e.key==='Enter')$('addFolder').click()};
 const pickFiles=()=>{if(!S.busy){openDrawer(false);$('filePick').value='';$('filePick').click()}};$('addFiles').onclick=pickFiles;$('addFiles2').onclick=pickFiles;
 $('filePick').onchange=()=>{const files=Array.from($('filePick').files||[]);if(files.length)importFiles(files.map(f=>({file:f,top:'',rel:f.name})))};
-$('scan').onclick=requestScan;$('filter').oninput=renderArchives;$('markSeen').onclick=()=>send('mark_seen');
+$('scan').onclick=requestScan;$('filter').oninput=renderArchives;$('rootFilter').onchange=()=>{S.root=$('rootFilter').value;renderArchives()};$('markSeen').onclick=()=>send('mark_seen');
 document.querySelectorAll('#kindChips .chip').forEach(b=>b.onclick=()=>{S.kind=b.dataset.kind;document.querySelectorAll('#kindChips .chip').forEach(x=>x.classList.toggle('on',x===b));renderArchives()});
 for(const id of ['checkOnOpen','recursive'])$(id).onchange=saveUiSettings;
 $('gpuPreview').onchange=()=>{saveUiSettings();glClear();if(S.mesh&&S.previewIndex>=0)send('preview_part',{index:S.previewIndex,max_facets:previewBudget()});else renderMesh()};
