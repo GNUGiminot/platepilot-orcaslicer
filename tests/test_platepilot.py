@@ -12,6 +12,7 @@ import re
 import struct
 import sys
 import tempfile
+import time
 import types
 import unittest
 import zipfile
@@ -140,6 +141,65 @@ class Packing(unittest.TestCase):
     def test_long_part_is_rotated_to_fit(self):
         result = pp._pack([part("rail.stl", box_stl(40, 240, 10))], 256, 200, 4)
         self.assertTrue(result["plates"][0]["items"][0]["rotated"])
+
+
+class PlateCount(unittest.TestCase):
+    """A wanted number of plates: auto by default, never fewer than needed, at most one per part."""
+
+    def layout_ok(self, result, parts, bed, margin, bed_y=None):
+        bed_y = bed if bed_y is None else bed_y
+        names = sorted(it["name"] for plate in result["plates"] for it in plate["items"])
+        self.assertEqual(names, sorted(p["name"] for p in parts))
+        dims = {p["name"]: p["dims"] for p in parts}
+        for plate in result["plates"]:
+            items = plate["items"]
+            self.assertTrue(items)
+            for it in items:
+                w, h = dims[it["name"]][:2]
+                self.assertEqual((it["w"], it["h"]), (h, w) if it["rotated"] else (w, h))
+                self.assertGreaterEqual(min(it["x"], it["y"]), margin - 1e-6)
+                self.assertLessEqual(it["x"] + it["w"], bed - margin + 1e-6)
+                self.assertLessEqual(it["y"] + it["h"], bed_y - margin + 1e-6)
+            for i, a in enumerate(items):
+                for b in items[i + 1:]:
+                    apart = (a["x"] + a["w"] + margin <= b["x"] + 1e-6 or b["x"] + b["w"] + margin <= a["x"] + 1e-6 or
+                             a["y"] + a["h"] + margin <= b["y"] + 1e-6 or b["y"] + b["h"] + margin <= a["y"] + 1e-6)
+                    self.assertTrue(apart, (a["name"], b["name"]))
+
+    def test_auto_is_as_few_plates_as_before(self):
+        parts = [part(f"p{i}.stl", box_stl(20, 20, 5)) for i in range(5)]
+        for pack in (pp._pack_into, pp._pack_smart):
+            result = pack(parts, 245, 245, 4)
+            self.assertEqual((len(result["plates"]), result["min_plates"], result["count_note"]), (1, 1, None))
+
+    def test_more_plates_spread_the_parts_evenly(self):
+        parts = [part(f"p{i}.stl", box_stl(20 + 5 * i, 20, 5)) for i in range(7)]
+        for pack in (pp._pack_into, pp._pack_smart):
+            result = pack(parts, 245, 245, 4, 3)
+            self.assertEqual(len(result["plates"]), 3, pack.__name__)
+            self.assertEqual(sorted(len(p["items"]) for p in result["plates"]), [2, 2, 3], pack.__name__)
+            self.assertIsNone(result["count_note"])
+            self.layout_ok(result, parts, 245, 4)
+
+    def test_fewer_plates_than_needed_keeps_the_needed_number(self):
+        parts = [part(f"p{i}.stl", box_stl(110, 90, 20)) for i in range(12)]
+        for pack in (pp._pack_into, pp._pack_smart):
+            result = pack(parts, 256, 256, 4, 1)
+            self.assertEqual((len(result["plates"]), result["min_plates"], result["count_note"]), (3, 3, "at_least"))
+
+    def test_no_more_plates_than_parts(self):
+        parts = [part(f"p{i}.stl", box_stl(30, 30, 5)) for i in range(2)]
+        for pack in (pp._pack_into, pp._pack_smart):
+            result = pack(parts, 245, 245, 4, 5)
+            self.assertEqual((len(result["plates"]), result["count_note"]), (2, "at_most"))
+            self.layout_ok(result, parts, 245, 4)
+
+    def test_turned_parts_stay_turned_on_their_new_plate(self):
+        parts = [part("rail.stl", box_stl(40, 230, 10)), part("block.stl", box_stl(30, 30, 10))]
+        result = pp._pack_into(parts, 245, 180, 4, 2)
+        self.assertEqual(len(result["plates"]), 2)
+        self.layout_ok(result, parts, 245, 4, 180)
+        self.assertTrue(any(it["rotated"] for plate in result["plates"] for it in plate["items"] if it["name"] == "rail.stl"))
 
 
 class SmartPacking(unittest.TestCase):
@@ -400,6 +460,19 @@ class Library(unittest.TestCase):
         self.assertEqual([r["name"] for r in rows if r["new"]], ["fresh"])
         self.assertEqual(summary["new"], 1)
 
+    def test_freshness_is_the_later_of_modified_and_created(self):
+        self.assertEqual(pp._freshness(types.SimpleNamespace(st_mtime=100.0, st_ctime=250.0)), 250.0)
+        self.assertEqual(pp._freshness(types.SimpleNamespace(st_mtime=300.0, st_ctime=250.0)), 300.0)
+
+    def test_a_pasted_copy_counts_as_fresh_though_it_keeps_an_old_date(self):
+        started = time.time() - 2
+        write_tree(self.root, {"pasted/e.stl": box_stl(4, 4, 4)})
+        old = time.mktime((2001, 1, 1, 0, 0, 0, 0, 0, -1))
+        os.utime(os.path.join(self.root, "pasted", "e.stl"), (old, old))   # what a copy in Explorer keeps
+        rows, _, _ = pp._scan_folder(self.root)
+        pasted = next(r for r in rows if r["name"] == "pasted")
+        self.assertGreater(pasted["time"], started)
+
     def test_opened_archive_counts_are_reused_and_empty_archives_counted(self):
         zip_path = os.path.join(self.root, "bundle.zip")
         rows, _, _ = pp._scan_folder(self.root)
@@ -594,10 +667,23 @@ class DropIntoPlatePilot(unittest.TestCase):
             self.assertEqual([p["name"] for p in opened["parts"]], ["bracket.stl"])
             self.assertTrue(os.path.isfile(os.path.join(storage, "added", "bracket", "bracket.stl")))
             library = [m for m in page.messages if m.get("type") == "archives"][-1]
-            self.assertEqual([(a["name"], a["added"], a["new"]) for a in library["archives"]], [(os.path.join("bracket"), True, False)])
+            # Opened for you after the drop, but still listed under New until you open it yourself.
+            self.assertEqual([(a["name"], a["added"], a["new"]) for a in library["archives"]], [(os.path.join("bracket"), True, True)])
+            page.send({"type": "open_model", "path": opened["path"], "kind": "folder"})
+            library = [m for m in page.messages if m.get("type") == "archives"][-1]
+            self.assertFalse(library["archives"][0]["new"])
 
             page.send({"type": "delete_source", "path": opened["path"]})
             self.assertFalse(os.path.exists(os.path.join(storage, "added", "bracket")))
+
+    def test_library_lists_the_newest_sources_first(self):
+        with tempfile.TemporaryDirectory() as storage:
+            page = FakePage(storage)
+            row = lambda name, when: {"kind": "folder", "name": name, "path": os.path.join(storage, name), "count": 1,
+                                      "type_counts": {"stl": 1}, "new": False, "likely": True, "time": when}
+            page._rows = [row("alpha", 100.0), row("zeta", 300.0), row("mid", 200.0), row("undated", None)]
+            page._post_rows(page._config())
+            self.assertEqual([a["name"] for a in page.messages[-1]["archives"]], ["zeta", "mid", "alpha", "undated"])
 
     def test_dropped_folder_with_non_latin_names_keeps_them_for_display(self):
         with tempfile.TemporaryDirectory() as storage:

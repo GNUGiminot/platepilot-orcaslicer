@@ -8,7 +8,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 
 ## Features
 
-- **Model library.** Watches folders, finds ZIP archives and unpacked folders with STL, STEP and 3MF files, and marks what is new since the last check. Each folder shows a short summary: how many sources, how many are new, when it was checked. Search, filter by type, hide sources you don't need (the files stay on disk).
+- **Model library.** Watches folders, finds ZIP archives and unpacked folders with STL, STEP and 3MF files, marks what is new since the last check (files you drop or paste included) and lists the newest first. Each folder shows a short summary: how many sources, how many are new, when it was checked. Search, filter by type, hide sources you don't need (the files stay on disk).
 - **Drag and drop, or Add files.** Drop ZIP, STL, STEP or 3MF files or a whole folder onto PlatePilot, paste them with Ctrl+V, or pick them with **Add files**. They are copied into PlatePilot's own folder and opened right away. Any file name works, and Orca does not ask for permission.
 - **A tidy list.** Archives that were never opened are judged by their names. Model downloads are listed up front; programs, drivers and archives with unclear names wait in a collapsed group at the bottom, and search still finds them.
 - **Parts longer than the bed side** are turned diagonally when that makes them fit, in both arrange modes.
@@ -16,6 +16,8 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 - **Two ways to arrange:**
   - **PlatePilot layout:** packs parts by their footprint (MaxRects, six orderings, 90° rotation) with an even gap, and shows each plate with its fill percentage before you send it.
   - **Smart layout (beta):** the same number of plates, but the parts of each plate form a group in the middle of the bed, away from its edges and evenly spaced; small parts and parts tall for their footprint get the places nearest the centre, and the plates are filled about evenly.
+  - **Plates:** leave it on auto for as few plates as the parts fit on, or set a number to spread them evenly over that many plates.
+  - Click a plate to see it up close, with every part numbered and listed with its size.
   - **Orca auto-arrange:** hands the parts to Orca's own arrange, which uses the real part outlines and your active printer and process profiles.
 - **One click to Prepare.** The project opens in the window you already have: one object per part, each on its own plate, with your current printer, process and filament profiles.
 - **English and Russian UI.** Follows Orca's language, or pick one in the settings. Light and dark themes follow Orca.
@@ -95,13 +97,16 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Возможности
 
-- **Библиотека моделей.** Следит за папками, находит ZIP-архивы и распакованные папки с STL, STEP и 3MF и отмечает новое с прошлой проверки. У каждой папки — короткая сводка: сколько источников, сколько новых, когда проверялась. Поиск, фильтр по типу, скрытие ненужных источников (файлы остаются на диске).
+- **Библиотека моделей.** Следит за папками, находит ZIP-архивы и распакованные папки с STL, STEP и 3MF отмечает новое с прошлой проверки (включая перетащенные и вставленные файлы) и показывает самые свежие первыми. У каждой папки — короткая сводка: сколько источников, сколько новых, когда проверялась. Поиск, фильтр по типу, скрытие ненужных источников (файлы остаются на диске).
 - **Перетаскивание и «Добавить файлы».** Перетащите на PlatePilot файлы ZIP, STL, STEP, 3MF или целую папку, вставьте их через Ctrl+V или выберите кнопкой **«Добавить файлы»**. Они копируются в собственную папку PlatePilot и сразу открываются. Имена файлов могут быть любыми, Orca не спрашивает разрешения.
 - **Аккуратный список.** Архивы, которые ещё не открывались, оцениваются по названию. Загрузки моделей идут в начале списка, а программы, драйверы и архивы с непонятными названиями свёрнуты в группу внизу; поиск находит и их.
 - **Детали длиннее стороны стола** поворачиваются по диагонали, если так они помещаются, в обоих режимах раскладки.
 - **3D-просмотр на вашем столе.** Затенённый предпросмотр любой STL на столе принтера, выбранного в Orca.
 - **Два способа раскладки:**
   - **Раскладка PlatePilot:** укладывает детали по габаритам (MaxRects, шесть порядков, поворот на 90°) с равным зазором и показывает каждый стол с процентом заполнения.
+  - **Умная раскладка (бета):** столько же столов, но детали каждого стола собраны в центре, подальше от краёв, с ровными зазорами; мелкие и высокие детали — ближе к середине, столы загружены поровну.
+  - **Столов:** «авто» — как можно меньше столов, или задайте число, и детали разойдутся по столам поровну.
+  - По щелчку на стол он открывается крупно: каждая деталь с номером, рядом список с размерами.
   - **Авторасстановка Orca:** передаёт детали встроенной авторасстановке Orca, которая учитывает настоящие контуры деталей и ваши активные профили принтера и процесса.
 - **Один клик до «Подготовки».** Проект открывается в уже открытом окне Orca: каждая деталь отдельным объектом на своём столе, с текущими профилями принтера, процесса и материала.
 - **Интерфейс на русском и английском.** Язык берётся из Orca или выбирается в настройках. Светлая и тёмная тема — как в Orca.

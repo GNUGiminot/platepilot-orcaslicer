@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1
+
+- The library lists the newest sources first. A file pasted or copied in Explorer keeps its original date, so freshness is the later of the modified and created times: a copy made today comes first.
+- Files dropped or pasted into PlatePilot show under New until you open them yourself, as files that appear in a watched folder do. Before, they were marked seen right away and listed by name, often at the bottom.
+- **Plates** field next to Gap, empty (auto) by default: as few plates as the parts fit on, as before. A higher number spreads the parts evenly over that many plates, largest first, in Calculate and Smart layout alike, even when they would fit on one. A number below what the parts need, or above one plate per part, is not used, and the plan says why. The field is not saved: every session starts on auto.
+- Bigger plate drawings after Calculate and Smart layout, and a close-up of any plate on click: the whole plate at window size with every part numbered, a list of the parts with their sizes and turns beside it, arrows or the keyboard to go through the plates, Esc to close.
+
 ## 0.6.0
 
 - **Smart layout (beta)**, a new button next to Calculate. It uses as many plates as the PlatePilot layout, but groups the parts of each plate in the middle of the bed instead of the front left corner: away from the edges (at least 10 mm where there is room), with wider even gaps, the plates filled about evenly. Small parts and parts tall for their footprint, which hold on worst, get the places nearest the centre. A plate too full for that keeps the dense layout, moved to the middle. Calculate, Orca auto-arrange and Open in Prepare work as before.

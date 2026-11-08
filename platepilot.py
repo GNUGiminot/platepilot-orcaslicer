@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.6.0"
+# version = "0.6.1"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -26,7 +26,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -93,6 +93,10 @@ STRINGS = {
     "mode.own": ("PlatePilot layout", "Раскладка PlatePilot"),
     "mode.orca": ("Orca auto-arrange", "Авторасстановка Orca"),
     "mode.gap": ("Gap", "Зазор"),
+    "mode.plates": ("Plates", "Столов"),
+    "mode.plates_auto": ("auto", "авто"),
+    "mode.plates_tip": ("How many plates to spread the parts over. Empty: as few as they fit on. More than that spreads them evenly, even if they would fit on one.",
+                        "На сколько столов разложить детали. Пусто — на как можно меньше. Больше — детали распределяются поровну, даже если поместились бы на одном."),
     "unit.mm": ("mm", "мм"),
     "btn.plan": ("Calculate", "Рассчитать"),
     "btn.plan_smart": ("Smart layout", "Умная раскладка"),
@@ -191,12 +195,19 @@ STRINGS = {
     "plan.parts": ("{n} part|{n} parts", "{n} деталь|{n} детали|{n} деталей"),
     "plan.plates": ("{n} plate|{n} plates", "{n} стол|{n} стола|{n} столов"),
     "plan.not_fit": ("does not fit: {name}", "не помещается: {name}"),
+    "plan.at_least": ("needs at least {plates}", "нужно не меньше: {plates}"),
+    "plan.at_most": ("at most one plate per part", "не больше одного стола на деталь"),
     "plan.too_tall": ("taller than Z: {name}", "выше Z: {name}"),
     "plan.zones": ("check excluded areas in Orca", "проверьте исключённые зоны в Orca"),
     "plan.smart": ("smart layout β", "умная раскладка β"),
     "plan.plate": ("Plate {n}", "Стол {n}"),
     "plan.plate_meta": ("{parts} · {fill}%", "{parts} · {fill}%"),
     "plan.rotated": (" · rotated {n}°", " · повёрнута на {n}°"),
+    "plan.zoom_hint": ("Click a plate to see it up close", "Нажмите на стол, чтобы рассмотреть его крупно"),
+    "plan.zoom_title": ("Plate {n} of {total}", "Стол {n} из {total}"),
+    "plan.prev": ("Previous plate", "Предыдущий стол"),
+    "plan.next": ("Next plate", "Следующий стол"),
+    "plan.close": ("Close", "Закрыть"),
     "folders.none": ("No folders yet.", "Папки ещё не добавлены."),
     "folders.remove": ("Stop watching", "Перестать отслеживать"),
     "folders.sources": ("{n} source|{n} sources", "{n} источник|{n} источника|{n} источников"),
@@ -418,8 +429,18 @@ canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:gra
 .field{display:inline-flex;align-items:center;gap:7px;color:var(--muted)}
 .spacer{flex:1}.mode-note{color:var(--muted);font-size:12px;margin-top:9px}
 .summary{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
-.plates{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-top:12px;max-height:34vh;overflow:auto;padding:2px}
-.plate{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:9px}
+.plates{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:12px;max-height:48vh;overflow:auto;padding:2px}
+.plate{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:9px;cursor:zoom-in}
+.plate:hover{border-color:var(--accent-line)}
+.zoom-hint{font-size:11.5px;color:var(--muted);margin-top:6px}
+.zoom{width:min(1100px,100%);max-height:calc(100vh - 40px);display:grid;grid-template-rows:auto 1fr;gap:10px;background:var(--bg);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 60px -20px rgb(0 0 0/.45);padding:14px 16px}
+.zoom-head{display:flex;align-items:center;gap:8px}.zoom-head h2{margin:0;font-size:15px;flex:1}.zoom-head span{color:var(--muted);font-size:12px}
+.zoom-body{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:14px;min-height:0}
+.zoom-body svg{width:100%;height:auto;max-height:calc(100vh - 140px);display:block}
+.zoom-list{overflow:auto;font-size:12px;margin:0;padding:0;list-style:none}
+.zoom-list li{display:grid;grid-template-columns:22px 1fr;gap:2px 6px;padding:5px 0;border-top:1px solid var(--line)}
+.zoom-list li:first-child{border-top:0}.zoom-list .no{font-weight:700}.zoom-list .nm{overflow-wrap:anywhere}.zoom-list .dm{grid-column:2;color:var(--muted)}
+@media (max-width:760px){.zoom-body{grid-template-columns:1fr}.zoom-list{max-height:30vh}}
 .plate-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;gap:6px}.plate-head b{font-size:12.5px}.plate-head span{font-size:11px;color:var(--muted)}
 .plate svg{display:block;width:100%;height:auto;border-radius:6px}
 /* status */
@@ -504,6 +525,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
    <div class="layout-row">
     <div class="seg" id="modeSeg"><button data-mode="own" class="on"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="mode.own">PlatePilot layout</span></button><button data-mode="orca"><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="mode.orca">Orca auto-arrange</span></button></div>
     <label class="field" id="marginField"><span data-i18n="mode.gap">Gap</span> <input id="margin" type="number" min="0" max="20" step="0.5" value="4"> <span data-i18n="unit.mm">mm</span></label>
+    <label class="field" id="platesField" data-i18n-title="mode.plates_tip" title="How many plates"><span data-i18n="mode.plates">Plates</span> <input id="plateCount" type="number" min="1" max="50" step="1" data-i18n-ph="mode.plates_auto" placeholder="auto"></label>
     <span class="spacer"></span>
     <button id="plan"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="btn.plan">Calculate</span></button>
     <button id="planSmart" data-i18n-title="btn.plan_smart_tip" title="Beta: parts grouped in the middle of each plate"><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.plan_smart">Smart layout</span><span class="beta">β</span></button>
@@ -512,7 +534,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
    </div>
    <div id="modeNote" class="mode-note"></div>
    <div id="summary" class="summary"></div>
-   <div id="plates" class="plates"></div>
+   <div id="plates" class="plates"></div><div id="zoomHint" class="zoom-hint" hidden data-i18n="plan.zoom_hint">Click a plate to see it up close</div>
   </div>
  </section>
 </main>
@@ -548,6 +570,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 </aside>
 
 <div id="drop" class="drop" hidden><div class="drop-card"><svg class="ic"><use href="#i-plus"/></svg><h2 data-i18n="drop.title">Drop to add to PlatePilot</h2><p data-i18n="drop.note">ZIP, STL, STEP, 3MF or a folder with them.</p></div></div>
+<div id="zoom" class="modal" hidden><div class="zoom" role="dialog" aria-modal="true"><div class="zoom-head"><h2 id="zoomTitle"></h2><span id="zoomMeta"></span><button id="zoomPrev" class="icon" data-i18n-title="plan.prev" title="Previous plate">&#8249;</button><button id="zoomNext" class="icon" data-i18n-title="plan.next" title="Next plate">&#8250;</button><button id="zoomClose" data-i18n="plan.close">Close</button></div><div class="zoom-body"><div id="zoomPlate"></div><ol id="zoomList" class="zoom-list"></ol></div></div></div>
 <div id="modal" class="modal" hidden><div class="dialog"><h2 id="modalTitle" data-i18n="modal.confirm">Confirm</h2><div id="modalText" class="body"></div><div class="actions"><button id="modalNo" data-i18n="modal.cancel">Cancel</button><button id="modalYes" class="primary" data-i18n="modal.continue">Continue</button></div></div></div>
 
 <script>
@@ -656,9 +679,26 @@ tris.sort((p,q)=>p.z-q.z);for(const tr of tris){const k=tr.k,r=Math.min(255,ar*k
 ctx.fillStyle=dark?'rgba(255,255,255,.55)':'rgba(30,40,50,.55)';ctx.font='11px system-ui,sans-serif';ctx.textAlign='right';ctx.fillText(`${fmt(bx)} × ${fmt(by)} ${t('unit.mm')}`,w-12,h-12)}
 
 /* plan */
-function renderPlan(plan){S.plan=plan;updateActions();if(!plan){$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);if(plan.smart===true)pills.unshift(`<span class="pill accent">${esc(t('plan.smart'))}</span>`);$('summary').innerHTML=pills.join('');
-$('plates').innerHTML=plan.plates.map((p,pi)=>{const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(bx*by)*100;let grid='';for(let x=50;x<bx;x+=50)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="${by}"/>`;for(let y=50;y<by;y+=50)grid+=`<line x1="0" y1="${y}" x2="${bx}" y2="${y}"/>`;const items=p.items.map((it,ii)=>{const col=PALETTE[(pi*3+ii)%PALETTE.length],y=by-it.y-it.h,fs=Math.max(5,Math.min(it.w/7,it.h/2.6,13));const label=it.w>22&&it.h>10?`<text x="${it.x+it.w/2}" y="${y+it.h/2}" font-size="${fs}" text-anchor="middle" dominant-baseline="central" fill="currentColor">${esc(it.name.replace(/\.stl$/i,'').slice(0,Math.max(3,Math.floor(it.w/fs*1.7))))}</text>`:'';return `<g><title>${esc(it.name)} · ${fmt(it.w)} × ${fmt(it.h)} ${esc(t('unit.mm'))}${(it.angle||it.rotated)?esc(t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360})):''}</title><rect x="${it.x}" y="${y}" width="${it.w}" height="${it.h}" rx="2.5" fill="${col}" fill-opacity=".26" stroke="${col}" stroke-width="1.2"/>${label}</g>`}).join('');return `<div class="plate"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)}))}</span></div><svg viewBox="-2 -2 ${bx+4} ${by+4}"><rect x="0" y="0" width="${bx}" height="${by}" rx="4" fill="var(--surface-2)" stroke="var(--accent-line)" stroke-width="1.2"/><g stroke="var(--line)" stroke-width=".6">${grid}</g>${items}</svg></div>`}).join('')}
-function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
+function renderPlan(plan){S.plan=plan;updateActions();if(!$('zoom').hidden)closeZoom();if(!plan){$('zoomHint').hidden=true;$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);if(plan.count_note==='at_least')pills.push(`<span class="pill warn">${esc(t('plan.at_least',{plates:plural('plan.plates',plan.min_plates)}))}</span>`);if(plan.count_note==='at_most')pills.push(`<span class="pill warn">${esc(t('plan.at_most'))}</span>`);if(plan.smart===true)pills.unshift(`<span class="pill accent">${esc(t('plan.smart'))}</span>`);$('summary').innerHTML=pills.join('');
+$('plates').innerHTML=plan.plates.map((p,pi)=>`<div class="plate" data-plate="${pi}"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(plateMeta(p))}</span></div>${plateSvg(p,pi,false)}</div>`).join('');
+ $('zoomHint').hidden=!plan.plates.length}
+function plateMeta(p){const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(S.plan.bed.x*S.plan.bed.y)*100;return t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)})}
+function itemTitle(it){return `${it.name} · ${fmt(it.w)} × ${fmt(it.h)} ${t('unit.mm')}${(it.angle||it.rotated)?t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360}):''}`}
+// The plate as seen from above, front edge down. The close-up numbers every part (the list beside it
+// names them) and labels the ones wide enough; the thumbnail only labels the wide ones.
+function plateSvg(p,pi,big){const bx=S.plan.bed.x,by=S.plan.bed.y;let grid='';for(let x=50;x<bx;x+=50)grid+=`<line x1="${x}" y1="0" x2="${x}" y2="${by}"/>`;for(let y=50;y<by;y+=50)grid+=`<line x1="0" y1="${y}" x2="${bx}" y2="${y}"/>`;
+ const items=p.items.map((it,ii)=>{const col=PALETTE[(pi*3+ii)%PALETTE.length],y=by-it.y-it.h,cx=it.x+it.w/2,cy=y+it.h/2,fs=Math.max(big?4:5,Math.min(it.w/7,it.h/2.6,big?9:13));
+  const name=esc(it.name.replace(/\.stl$/i,'').slice(0,Math.max(3,Math.floor(it.w/fs*1.7))));let label='';
+  if(big){const r=Math.max(3.2,Math.min(6,it.w/4,it.h/4)),wide=it.w>30&&it.h>16;label=`<circle cx="${cx}" cy="${wide?cy-fs*.8:cy}" r="${r}" fill="${col}"/><text x="${cx}" y="${wide?cy-fs*.8:cy}" font-size="${r*1.25}" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#fff">${ii+1}</text>`+(wide?`<text x="${cx}" y="${cy+fs*.9}" font-size="${fs}" text-anchor="middle" dominant-baseline="central" fill="currentColor">${name}</text>`:'')}
+  else if(it.w>22&&it.h>10)label=`<text x="${cx}" y="${cy}" font-size="${fs}" text-anchor="middle" dominant-baseline="central" fill="currentColor">${name}</text>`;
+  return `<g><title>${esc(itemTitle(it))}</title><rect x="${it.x}" y="${y}" width="${it.w}" height="${it.h}" rx="2.5" fill="${col}" fill-opacity=".26" stroke="${col}" stroke-width="${big?.8:1.2}"/>${label}</g>`}).join('');
+ return `<svg viewBox="-2 -2 ${bx+4} ${by+4}"><rect x="0" y="0" width="${bx}" height="${by}" rx="4" fill="var(--surface-2)" stroke="var(--accent-line)" stroke-width="1.2"/><g stroke="var(--line)" stroke-width=".6">${grid}</g>${items}</svg>`}
+function openZoom(pi){const plates=S.plan&&S.plan.plates||[];if(!plates.length)return;S.zoom=(pi+plates.length)%plates.length;const p=plates[S.zoom];
+ $('zoomTitle').textContent=t('plan.zoom_title',{n:S.zoom+1,total:plates.length});$('zoomMeta').textContent=plateMeta(p);$('zoomPlate').innerHTML=plateSvg(p,S.zoom,true);
+ $('zoomList').innerHTML=p.items.map((it,ii)=>`<li><span class="no" style="color:${PALETTE[(S.zoom*3+ii)%PALETTE.length]}">${ii+1}</span><span class="nm">${esc(it.name)}</span><span class="dm">${esc(fmt(it.w)+' × '+fmt(it.h)+' '+t('unit.mm')+((it.angle||it.rotated)?t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360}):''))}</span></li>`).join('');
+ $('zoomPrev').disabled=$('zoomNext').disabled=plates.length<2;$('zoom').hidden=false;$('zoomClose').focus()}
+function closeZoom(){$('zoom').hidden=true;S.zoom=null}
+function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('platesField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
 
 /* wiring */
 $('openSettings').onclick=()=>openDrawer(true);$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
@@ -676,8 +716,11 @@ $('language').onchange=()=>{saveUiSettings();send('init')};
 $('margin').onchange=()=>{invalidatePlan();saveUiSettings()};
 $('all').onclick=()=>{S.parts.forEach(p=>{if(p.filetype==='stl'&&p.member&&!p.blocked)p.included=true});invalidatePlan();renderParts()};$('none').onclick=()=>{S.parts.forEach(p=>p.included=false);invalidatePlan();renderParts()};
 document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
-$('plan').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,included:selectedStl().map(p=>p.member)})};
-$('planSmart').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,included:selectedStl().map(p=>p.member),smart:true})};
+// Empty or 0 is "auto": as few plates as the parts fit on.
+function wantedPlates(){const v=Math.round(Number($('plateCount').value));return v>0?Math.min(50,v):0}
+$('plateCount').onchange=()=>{const v=wantedPlates();$('plateCount').value=v||''};
+$('plan').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member)})};
+$('planSmart').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member),smart:true})};
 $('sendPrepare').onclick=()=>{if(!S.busy){status(t('st.building'));send('export_project')}};
 $('nativeArrange').onclick=()=>{if(!S.busy)send('native_arrange',{included:selectedStl().map(p=>p.member)})};
 $('modalYes').onclick=()=>finishAsk(true);$('modalNo').onclick=()=>finishAsk(false);
@@ -690,6 +733,10 @@ window.onresize=()=>renderMesh();new ResizeObserver(()=>renderMesh()).observe(vi
 const recheck=()=>{if(document.visibilityState==='visible'&&S.config.check_on_open!==false&&S.lastScan&&!S.busy&&Date.now()-S.lastScan>60000)requestScan()};
 document.addEventListener('visibilitychange',recheck);window.addEventListener('focus',recheck);
 
+$('plates').addEventListener('click',e=>{const card=e.target.closest('.plate');if(card)openZoom(Number(card.dataset.plate))});
+$('zoomClose').onclick=closeZoom;$('zoomPrev').onclick=()=>openZoom(S.zoom-1);$('zoomNext').onclick=()=>openZoom(S.zoom+1);
+$('zoom').addEventListener('click',e=>{if(e.target===$('zoom'))closeZoom()});
+document.addEventListener('keydown',e=>{if($('zoom').hidden)return;if(e.key==='Escape'){e.preventDefault();closeZoom()}else if(e.key==='ArrowLeft')openZoom(S.zoom-1);else if(e.key==='ArrowRight')openZoom(S.zoom+1)});
 /* drag and drop, paste */
 let dragDepth=0;
 const dragHasFiles=e=>Array.from(e.dataTransfer?.types||[]).includes('Files');
@@ -1245,6 +1292,13 @@ def _safe_archive_path(path, root):
         return False
 
 
+def _freshness(stat):
+    """When a file got here, in seconds: the later of its modification and creation times. A copy
+    pasted in Explorer keeps the original's modification time, but Windows gives it a new
+    creation time (st_ctime there; on Linux and macOS st_ctime is the last metadata change)."""
+    return max(stat.st_mtime, stat.st_ctime)
+
+
 def _fingerprint(path):
     stat = os.stat(path)
     return f"{stat.st_size}:{getattr(stat, 'st_mtime_ns', int(stat.st_mtime * 1e9))}"
@@ -1322,9 +1376,10 @@ def _scan_folder(folder, recursive=True):
         for name in sorted([n for n in files if n.lower().endswith(".zip")], key=str.casefold):
             path = os.path.join(current, name)
             try:
+                stat = os.stat(path)
                 row = {"kind": "zip", "name": name, "path": path, "root": folder,
-                       "fingerprint": _fingerprint(path), "size": _fmt_size(os.path.getsize(path)),
-                       "count": None, "type_counts": None}
+                       "fingerprint": _fingerprint(path), "size": _fmt_size(stat.st_size),
+                       "count": None, "type_counts": None, "time": _freshness(stat)}
             except OSError:
                 continue
             if not _orca_can_read(path):
@@ -1343,7 +1398,8 @@ def _scan_folder(folder, recursive=True):
             rows.append({"kind": "folder", "name": os.path.relpath(current, folder) if current != folder else os.path.basename(folder),
                          "path": os.path.realpath(current), "root": folder,
                          "fingerprint": f"{len(model_files)}:{total}:{newest}", "size": _fmt_size(total),
-                         "count": len(model_files), "type_counts": _type_counts(model_files), "files": model_files})
+                         "count": len(model_files), "type_counts": _type_counts(model_files), "files": model_files,
+                         "time": max(_freshness(stat) for stat in stats)})
             if len(rows) >= MAX_ARCHIVES:
                 return rows, True, skipped
     return rows, False, skipped
@@ -1704,6 +1760,52 @@ def _pack(parts, bed_x, bed_y, margin):
     return {"plates": best["plates"], "problems": best["problems"], "bed": {"x": usable_x, "y": usable_y}, "total": len(items)}
 
 
+def _as_parts(items):
+    """Packed items back to parts for another packing run, as they lie before any 90° turn."""
+    return [{"name": it["name"], "member": it.get("member"),
+             "dims": [it["h"], it["w"], it["z"]] if it["rotated"] else [it["w"], it["h"], it["z"]],
+             "source_dims": it["source_dims"], "angle": it["angle"]} for it in items]
+
+
+def _plate_count(base, wanted):
+    """How many plates to use: the wanted number, but no fewer than base needs and no more
+    than one per part. Returns (count, note) with note "at_least" or "at_most" when the
+    wanted number could not be used."""
+    least = len(base["plates"])
+    parts = sum(len(plate["items"]) for plate in base["plates"])
+    wanted = int(wanted or 0)
+    if wanted <= 0:
+        return least, None
+    if wanted < least:
+        return least, "at_least"
+    if wanted > parts:
+        return max(least, parts), "at_most"
+    return wanted, None
+
+
+def _pack_into(parts, bed_x, bed_y, margin, wanted=0):
+    """_pack with a wanted number of plates. More plates than _pack needs: the parts are spread
+    evenly (largest first, each onto the least filled plate it still fits on) and every plate
+    is packed as _pack packs one. Adds "min_plates" and "count_note" to _pack's result."""
+    base = _pack(parts, bed_x, bed_y, margin)
+    count, note = _plate_count(base, wanted)
+    result = dict(base, min_plates=len(base["plates"]), count_note=note)
+    if base["problems"] or count <= len(base["plates"]):
+        return result
+    items = [it for plate in base["plates"] for it in plate["items"]]
+    groups = [[] for _ in range(count)]
+    for it in sorted(items, key=lambda it: -it["w"] * it["h"]):
+        for i in sorted(range(count), key=lambda i: (sum(o["w"] * o["h"] for o in groups[i]), i)):
+            trial = _pack(_as_parts(groups[i] + [it]), bed_x, bed_y, margin)
+            if not trial["problems"] and len(trial["plates"]) == 1:
+                groups[i].append(it)
+                break
+        else:
+            return result   # cannot happen while each part fits a plate alone; keep _pack's plates
+    plates = [_pack(_as_parts(group), bed_x, bed_y, margin)["plates"][0] for group in groups if group]
+    return dict(result, plates=plates)
+
+
 def _split_free_rects(free_rects, used):
     """MaxRects step for _pack_smart: free rectangles left after placing `used`, without the ones
     inside another (the same split as in _pack, kept apart so _pack stays as it is)."""
@@ -1854,13 +1956,16 @@ def _smart_plate(items, bed_x, bed_y, margin):
     return best
 
 
-def _pack_smart(parts, bed_x, bed_y, margin):
+def _pack_smart(parts, bed_x, bed_y, margin, wanted=0):
     """Smart layout (beta): as many plates as _pack needs, with the parts of each plate in a
     centred group, small parts nearer the middle, away from the bed sides, evenly spaced, and
     the plates filled about evenly. A plate too full for that gets _pack's dense layout, moved to
     the middle. The result has the same form as _pack's, plus "smart": True, or "fallback" when
-    some parts do not fit and _pack's result is returned as it is."""
+    some parts do not fit and _pack's result is returned as it is. `wanted` asks for more plates
+    than _pack needs (see _plate_count)."""
     base = _pack(parts, bed_x, bed_y, margin)
+    plate_count, note = _plate_count(base, wanted)
+    base = dict(base, min_plates=len(base["plates"]), count_note=note)
     if base["problems"] or not base["plates"]:
         return dict(base, smart="fallback")
     gap = max(0.0, margin)
@@ -1868,7 +1973,6 @@ def _pack_smart(parts, bed_x, bed_y, margin):
     # Footprints as the part lies before any 90° turn; _place_from_centre picks the orientation.
     for it in items:
         it["fw"], it["fh"] = (it["h"], it["w"]) if it["rotated"] else (it["w"], it["h"])
-    plate_count = len(base["plates"])
 
     def unturned(group):
         return [dict(it, w=it["fw"], h=it["fh"]) for it in group]
@@ -1921,7 +2025,8 @@ def _pack_smart(parts, bed_x, bed_y, margin):
     plates = build(balanced, False) if balanced else None
     if plates is None:
         plates = build([list(plate["items"]) for plate in base["plates"]], True)
-    return {"plates": plates, "problems": [], "bed": base["bed"], "total": base["total"], "smart": True}
+    return {"plates": [p for p in plates if p["items"]], "problems": [], "bed": base["bed"], "total": base["total"],
+            "smart": True, "min_plates": base["min_plates"], "count_note": note}
 
 
 def _iter_stl_triangles(raw):
@@ -2349,7 +2454,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     summaries[key] = {"checked": time.time(), "unreadable": True}
                     continue
                 found, truncated, skipped = _scan_folder(folder, config.get("recursive", True) or origin == "added")
-                first_scan = origin == "added" or "sources" not in summaries.get(key, {})
+                # Files dropped or pasted into PlatePilot are news too: they show under New until seen.
+                first_scan = origin != "added" and "sources" not in summaries.get(key, {})
                 summaries[key] = _update_library(library, folder, found, truncated, first_scan)
                 summaries[key]["skipped"] = skipped
                 for row in found:
@@ -2402,9 +2508,10 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             # An archive that was never opened is listed as it is: only opening it tells what it holds.
             if counts is not None and not any(counts.get(t, 0) for t in enabled_types):
                 continue
-            item = {k: row.get(k) for k in ("kind", "name", "path", "count", "size", "root", "warning", "new", "added", "likely")}
+            item = {k: row.get(k) for k in ("kind", "name", "path", "count", "size", "root", "warning", "new", "added", "likely", "time")}
             item["type_counts"] = None if counts is None else {MODEL_TYPE_LABELS[t]: counts.get(t, 0) for t in MODEL_TYPE_LABELS if t in enabled_types and counts.get(t, 0)}
             visible.append(item)
+        visible.sort(key=lambda item: -(item.get("time") or 0))   # newest first
         summaries = self._library().get("folders", {})
         folders = [{"path": folder, "origin": origin, **summaries.get(_folder_key(folder), {})} for folder, origin in self._roots(config)]
         self.post_message({"type": "archives", "archives": visible, "folders": folders})
@@ -2425,8 +2532,9 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 return os.path.realpath(folder)
         raise ValueError(_t("err.source_gone"))
 
-    def _open_source(self, config, path, kind):
-        """Read a source's parts and make it the selected one."""
+    def _open_source(self, config, path, kind, mark_seen=True):
+        """Read a source's parts and make it the selected one; opening it marks it seen, except
+        right after an import, whose sources stay under New."""
         root = self._selected_root(path, config)
         row = self._row(path)
         if not self._is_added(path) and not _orca_can_read(path):
@@ -2455,7 +2563,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             parts = _read_loose_folder(copy, copy, catalog)
         self._selected_source = source
         self._last_plan = None
-        if row is not None:
+        if row is not None and mark_seen:
             self._mark_seen([row])
         self.post_message({"type": "archive", "path": path, "kind": kind, "name": os.path.basename(path), "parts": parts,
                            "added": self._is_added(path)})
@@ -2567,7 +2675,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         self._scan(config)
         if job["sources"]:
             first = job["sources"][0]
-            self._open_source(config, first, "zip" if first.lower().endswith(".zip") else "folder")
+            self._open_source(config, first, "zip" if first.lower().endswith(".zip") else "folder", mark_seen=False)
         self._notice(_t("msg.imported", files=_plural("import.files", job["files"])), "ok")
 
     def _import_paths(self, config, text):
@@ -2895,13 +3003,19 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     blobs = self._read_stl_blobs(source, all_parts, [p["member"] for p in too_wide])
                     selected = [dict(p, source_dims=p["dims"]) for p in selected]
                     selected = _turn_to_fit(selected, blobs, bed_x, bed_y, margin)
-                result = _pack_smart(selected, bed_x, bed_y, margin) if data.get("smart") else _pack(selected, bed_x, bed_y, margin)
+                try:
+                    wanted = max(0, min(50, int(data.get("plates") or 0)))
+                except (TypeError, ValueError):
+                    wanted = 0
+                pack = _pack_smart if data.get("smart") else _pack_into
+                result = pack(selected, bed_x, bed_y, margin, wanted)
                 max_z = profile.get("height")
                 too_tall = [p["name"] for p in selected if max_z and p["dims"][2] > max_z]
                 exportable = bool(result["plates"]) and not result["problems"] and not too_tall
                 self.post_message({"type": "plan", "plates": result["plates"], "bed": profile["size"], "profile": profile,
                                    "total": result["total"], "problems": result["problems"], "too_tall": too_tall,
-                                   "exclusions": profile.get("exclusions"), "exportable": exportable, "smart": result.get("smart", False)})
+                                   "exclusions": profile.get("exclusions"), "exportable": exportable, "smart": result.get("smart", False),
+                                   "min_plates": result.get("min_plates"), "count_note": result.get("count_note")})
                 self._last_plan = {"source": source, "plates": result["plates"], "profile": profile, "exportable": exportable}
             elif kind == "export_project":
                 plan = getattr(self, "_last_plan", None)
