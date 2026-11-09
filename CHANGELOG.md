@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (not released)
+## 0.7.0
 
 - **3MF files work like STL:** preview, layout and Open in Prepare. Each object of a 3MF becomes a part of its own, placed and turned as the 3MF has it, in millimetres whatever unit the file uses; objects made of components, also from the separate model files of Bambu and Orca projects, are put together. A 3MF is read once when its source is opened (about 2 s for 500 000 facets); scanning folders and starting the plugin are not slower.
 - **STEP parts get an Open in Orca button.** PlatePilot does not convert STEP itself (that would take a heavy engine): it hands the file to the Orca window, which opens it in Prepare and asks how finely to convert it. A STEP inside an archive is taken out into PlatePilot's folder first. Windows only, like the project hand-over.
