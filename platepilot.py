@@ -4,13 +4,14 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.6.3"
+# version = "0.7.0"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
 
 import base64
 import hashlib
+import io
 import json
 import math
 import os
@@ -21,12 +22,13 @@ import subprocess
 import sys
 import time
 from xml.sax.saxutils import quoteattr
+import xml.etree.ElementTree as ElementTree
 import zipfile
 
 import orca
 
 
-VERSION = "0.6.3"
+VERSION = "0.7.0"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -243,7 +245,11 @@ STRINGS = {
     "warn.zip_unreadable": ("Archive not read: {error}", "Архив не прочитан: {error}"),
     "err.archive_outside": ("the archive must be inside a watched folder", "архив должен находиться в выбранной папке"),
     "err.folder_outside": ("the model folder must be inside a watched folder", "папка модели должна находиться внутри отслеживаемой папки"),
-    "warn.stl_only": ("{type}: preview and layout work with STL only", "{type}: просмотр и раскладка доступны только для STL"),
+    "warn.step_open": ("STEP: no preview or layout; open it in Orca, which converts it itself", "STEP: без просмотра и раскладки; откройте в Orca — она преобразует его сама"),
+    "warn.3mf_error": ("3MF could not be read: {error}", "3MF не прочитан: {error}"),
+    "warn.3mf_empty": ("3MF holds no model", "в 3MF нет модели"),
+    "btn.open_in_orca": ("Open in Orca", "Открыть в Orca"),
+    "msg.step_sent": ("{name} sent to Orca: it opens it in Prepare.", "{name} передан в Orca: она откроет его в «Подготовке»."),
     "warn.unsafe_name": ("name with non-Latin letters: this Orca build cannot open it for plugins (OrcaSlicer 2.5.0 can); drag it into PlatePilot",
                          "имя с нелатинскими буквами: эта сборка Orca не даёт плагинам открыть его (OrcaSlicer 2.5.0 даёт) — перетащите в PlatePilot"),
     "err.unsafe_path": ("{path}: Orca does not let plugins open paths with a folder named config, cert or secret, and builds before OrcaSlicer 2.5.0 none with non-Latin letters. Drag the files into PlatePilot or rename the folder.",
@@ -417,7 +423,9 @@ input[type=number]{width:76px}
 .parts{display:flex;flex-direction:column}.parts .card-head{border-bottom:1px solid var(--line)}
 .part-list{overflow:auto;flex:1;padding:4px 6px 6px}
 .part{display:flex;gap:10px;align-items:center;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer}.part:hover{background:var(--surface-2)}.part.on{background:var(--accent-soft)}
-.part.off{cursor:default;opacity:.62}.part .t{min-width:0;flex:1}.part .n{overflow-wrap:anywhere;line-height:1.3}.part .m{color:var(--muted);font-size:11.5px;margin-top:2px}
+.part.off{cursor:default;opacity:.62}
+.part.ext{cursor:default}.part.ext .t{opacity:.62}
+button.small{height:26px;padding:0 10px;font-size:12px;flex:none}.part .t{min-width:0;flex:1}.part .n{overflow-wrap:anywhere;line-height:1.3}.part .m{color:var(--muted);font-size:11.5px;margin-top:2px}
 .check{appearance:none;width:18px;height:18px;margin:0;flex:none;border-radius:5px;border:1.5px solid color-mix(in srgb,var(--fg) 30%,transparent);background:var(--raised);display:grid;place-items:center;cursor:pointer;padding:0}
 .check:checked{background:var(--accent);border-color:var(--accent)}.check:checked::after{content:"";width:9px;height:5px;border:2px solid #fff;border-top:0;border-right:0;transform:translateY(-1px) rotate(-45deg)}.check:disabled{opacity:.4;cursor:default}
 .viewer{position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,var(--accent) 7%,var(--surface)),var(--surface) 60%)}
@@ -595,7 +603,8 @@ function status(text,level='info'){$('status').textContent=text;$('statusbar').c
 function setBusy(b){S.busy=b;document.body.classList.toggle('busy',b);$('scan').disabled=b;clearTimeout(S.replyTimer);if(b)S.replyTimer=setTimeout(noAnswer,30000);updateActions()}
 /* a plugin call that fails inside Orca never answers; the page must not stay busy forever */
 function noAnswer(){if(!S.busy||S.importing||S.nativeTick)return;S.scanning=false;setBusy(false);status(t('st.no_answer'),'error')}
-function selectedStl(){return S.parts.filter(p=>p.included&&p.filetype==='stl'&&p.member)}
+function meshPart(p){return (p.filetype==='stl'||p.filetype==='3mf')&&p.member&&!p.blocked}
+function selectedStl(){return S.parts.filter(p=>p.included&&meshPart(p))}
 function updateActions(){const n=selectedStl().length;$('plan').disabled=S.busy||!n;$('planSmart').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('partCount').textContent=S.parts.length?`${n} / ${S.parts.length}`:'0'}
 function scheduleNativeTick(){if(S.nativeTick)return;S.nativeTick=setTimeout(()=>{S.nativeTick=null;send('native_arrange_tick')},700)}
 function stopNativeTicks(){if(S.nativeTick)clearTimeout(S.nativeTick);S.nativeTick=null}
@@ -634,7 +643,8 @@ function renderArchives(){const q=$('filter').value.trim().toLowerCase();renderR
 function clearSource(note){S.selected=null;S.parts=[];S.plan=null;S.mesh=null;S.previewIndex=-1;renderSourceHead();renderParts(note);renderPlan(null);drawEmptyView()}
 function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;const action=S.selectedAdded?`<button id="deleteSelected" class="ghost" title="${esc(t('src.delete_tip'))}">${icon('x')}${esc(t('src.delete'))}</button>`:`<button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('sourceHead').innerHTML=`<div class="glyph ${kindClass(S.selectedKind,S.selectedAdded)}">${icon(S.selectedKind==='folder'?'models':'zip')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div>${action}`;if(S.selectedAdded)$('deleteSelected').onclick=()=>ask(t('delete.title'),t('delete.body',{name:S.selectedName}),'delete',{path:S.selected},t('src.delete'));else $('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
 function partMeta(p){if(Array.isArray(p.dims)&&p.dims.length===3&&p.filetype==='stl')return esc(t('parts.meta',{dims:p.dims.map(v=>fmt(v)).join(' × '),facets:Number(p.facets||0).toLocaleString(locale())}));return esc(t('parts.catalog_only',{type:(p.filetype||'model').toUpperCase()}))}
-function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=p.filetype==='stl'&&p.member&&!p.blocked;return `<div class="part ${usable?'':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}</div></div></div>`}).join('');document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})});updateActions()}
+function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=meshPart(p);return `<div class="part ${usable?'':p.open_in_orca?'ext':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}</div></div>${p.open_in_orca?`<button class="small" data-orca="${i}">${esc(t('btn.open_in_orca'))}</button>`:''}</div>`}).join('');
+ document.querySelectorAll('[data-orca]').forEach(el=>el.onclick=e=>{e.stopPropagation();if(!S.busy)send('open_in_orca',{index:Number(el.dataset.orca)})});document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off):not(.ext)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})});updateActions()}
 function invalidatePlan(){if(S.plan){S.plan=null;renderPlan(null)}}
 
 /* 3D preview */
@@ -1555,10 +1565,19 @@ def _read_archive(path, root):
             if info.is_dir() or not _model_type_for_name(info.filename):
                 continue
             model_type = _model_type_for_name(info.filename)
-            if model_type != "stl":
-                parts.append({"name": os.path.basename(info.filename), "member": info.filename,
-                              "filetype": model_type, "dims": [], "facets": 0,
-                              "included": False, "warning": _t("warn.stl_only", type=MODEL_TYPE_LABELS[model_type])})
+            if model_type == "step":
+                parts.append({"name": os.path.basename(info.filename), "member": info.filename, "filetype": "step",
+                              "dims": [], "facets": 0, "included": False, "open_in_orca": True, "warning": _t("warn.step_open")})
+                continue
+            if model_type == "3mf":
+                if info.file_size > MAX_STL_BYTES:
+                    parts.append({"name": os.path.basename(info.filename), "filetype": "3mf", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
+                    continue
+                total += info.file_size
+                if total > MAX_TOTAL_STL_BYTES:
+                    raise ValueError(_t("err.total_archive", mb=MAX_TOTAL_STL_BYTES // (1024 * 1024)))
+                parts.extend(_threemf_rows_or_warning(os.path.basename(info.filename), info.filename,
+                                                      ("zip", path, info.filename, info.file_size, info.CRC), lambda info=info: zf.read(info)))
                 continue
             if info.file_size > MAX_STL_BYTES:
                 parts.append({"name": os.path.basename(info.filename), "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
@@ -1577,6 +1596,18 @@ def _read_archive(path, root):
     return parts
 
 
+def _threemf_rows_or_warning(name, member, key, read):
+    try:
+        items = _threemf_cached(key, read)
+    except Exception as exc:
+        return [{"name": name, "member": member, "filetype": "3mf", "blocked": True, "dims": [0, 0, 0], "facets": 0,
+                 "included": False, "warning": _t("warn.3mf_error", error=str(exc)[:100])}]
+    if not items:
+        return [{"name": name, "member": member, "filetype": "3mf", "blocked": True, "dims": [0, 0, 0], "facets": 0,
+                 "included": False, "warning": _t("warn.3mf_empty")}]
+    return _threemf_part_rows(name, member, items)
+
+
 def _read_loose_folder(path, root, catalog=()):
     """Parts of a model folder. catalog holds (name, warning) of files that stay in the original
     folder (STEP, 3MF, oversized STL and names Orca cannot check, which a copy made by
@@ -1589,15 +1620,30 @@ def _read_loose_folder(path, root, catalog=()):
     names = set(n for n in os.listdir(path) if _model_type_for_name(n)) | set(catalog)
     for name in sorted(names, key=str.casefold):
         model_type = _model_type_for_name(name)
-        if name in catalog and (model_type == "stl" or catalog[name]):
+        if model_type == "step":
+            # Not read here: the button hands the file to Orca, which opens STEP itself.
+            parts.append({"name": name, "member": os.path.join(path, name), "filetype": "step", "dims": [], "facets": 0,
+                          "included": False, "open_in_orca": not catalog.get(name), "warning": catalog.get(name) or _t("warn.step_open")})
+            continue
+        if name in catalog and (model_type in ("stl", "3mf") or catalog[name]):
             parts.append({"name": name, "filetype": model_type, "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False,
                           "warning": catalog[name] or _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
             continue
-        if model_type != "stl":
-            parts.append({"name": name, "filetype": model_type, "dims": [], "facets": 0,
-                          "included": False, "warning": _t("warn.stl_only", type=MODEL_TYPE_LABELS[model_type])})
-            continue
         member = os.path.join(path, name)
+        if model_type == "3mf":
+            size = os.path.getsize(member)
+            if size > MAX_STL_BYTES:
+                parts.append({"name": name, "filetype": "3mf", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
+                continue
+            total += size
+            if total > MAX_TOTAL_STL_BYTES:
+                raise ValueError(_t("err.total_folder", mb=MAX_TOTAL_STL_BYTES // (1024 * 1024)))
+
+            def read(member=member):
+                with open(member, "rb") as stream:
+                    return stream.read()
+            parts.extend(_threemf_rows_or_warning(name, member, ("file", member, size, os.path.getmtime(member)), read))
+            continue
         size = os.path.getsize(member)
         if size > MAX_STL_BYTES:
             parts.append({"name": name, "member": member, "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024))})
@@ -1613,6 +1659,140 @@ def _read_loose_folder(path, root, catalog=()):
         except Exception as exc:
             parts.append({"name": name, "member": member, "filetype": "stl", "blocked": True, "dims": [0, 0, 0], "facets": 0, "included": False, "warning": _t("warn.stl_error", error=str(exc)[:100])})
     return parts
+
+
+THREEMF_CORE = "{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}"
+THREEMF_PRODUCTION = "{http://schemas.microsoft.com/3dmanufacturing/production/2015/06}"
+THREEMF_UNITS = {"micron": 0.001, "millimeter": 1.0, "centimeter": 10.0, "inch": 25.4, "foot": 304.8, "meter": 1000.0}
+STL_RECORD = struct.Struct("<12fH")
+
+
+def _threemf_matrix(text):
+    """A 3MF transform ("m00 m01 m02 m10 ... m32", applied to row vectors) as 12 floats."""
+    if not text:
+        return (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+    values = tuple(float(v) for v in text.split())
+    if len(values) != 12:
+        raise ValueError("bad transform")
+    return values
+
+
+def _threemf_then(a, b):
+    """The transform that applies a, then b."""
+    out = []
+    for r in range(4):
+        row = a[r * 3:r * 3 + 3]
+        for c in range(3):
+            value = row[0] * b[c] + row[1] * b[3 + c] + row[2] * b[6 + c]
+            out.append(value + (b[9 + c] if r == 3 else 0.0))
+    return tuple(out)
+
+
+def _threemf_parts(raw):
+    """[(object name, binary STL bytes)] for each build item of a 3MF, in millimetres, placed
+    as the 3MF places it. Objects made of components, also from the other model files of a
+    Bambu or Orca project (the production extension's path), are followed through."""
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        root = "3D/3dmodel.model"
+        try:
+            rels = ElementTree.fromstring(archive.read("_rels/.rels"))
+            for rel in rels:
+                if rel.get("Type", "").endswith("/3dmodel"):
+                    root = rel.get("Target", root).lstrip("/")
+        except KeyError:
+            pass
+        models = {}
+
+        def model(path):
+            path = path.lstrip("/")
+            if path not in models:
+                tree = ElementTree.fromstring(archive.read(path))
+                objects = {}
+                resources = tree.find(THREEMF_CORE + "resources")
+                for obj in (resources if resources is not None else []):
+                    if obj.tag != THREEMF_CORE + "object":
+                        continue
+                    mesh = obj.find(THREEMF_CORE + "mesh")
+                    if mesh is not None:
+                        vertices = [(float(v.get("x")), float(v.get("y")), float(v.get("z")))
+                                    for v in mesh.find(THREEMF_CORE + "vertices")]
+                        triangles = [(int(f.get("v1")), int(f.get("v2")), int(f.get("v3")))
+                                     for f in mesh.find(THREEMF_CORE + "triangles")]
+                        objects[obj.get("id")] = (obj.get("name") or "", vertices, triangles, None)
+                    else:
+                        components = obj.find(THREEMF_CORE + "components")
+                        parts = [(c.get("objectid"), _threemf_matrix(c.get("transform")),
+                                  c.get(THREEMF_PRODUCTION + "path") or path) for c in (components if components is not None else [])]
+                        objects[obj.get("id")] = (obj.get("name") or "", None, None, parts)
+                models[path] = (tree, objects)
+            return models[path]
+
+        def collect(path, object_id, matrix, out, depth=0):
+            if depth > 16:
+                raise ValueError("components nest too deep")
+            name, vertices, triangles, components = model(path)[1][object_id]
+            if vertices is not None:
+                m = matrix
+                placed = [(x * m[0] + y * m[3] + z * m[6] + m[9], x * m[1] + y * m[4] + z * m[7] + m[10],
+                           x * m[2] + y * m[5] + z * m[8] + m[11]) for x, y, z in vertices]
+                for a, b, c in triangles:
+                    out.append(placed[a] + placed[b] + placed[c])
+                    if len(out) > 2_000_000:
+                        raise ValueError(_t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024)))
+            for child, child_matrix, child_path in components or []:
+                collect(child_path, child, _threemf_then(child_matrix, matrix), out, depth + 1)
+
+        tree, objects = model(root)
+        scale = THREEMF_UNITS.get(tree.get("unit", "millimeter"), 1.0)
+        build = tree.find(THREEMF_CORE + "build")
+        result = []
+        for item in (build if build is not None else []):
+            if item.tag != THREEMF_CORE + "item":
+                continue
+            triangles = []
+            collect(root, item.get("objectid"), _threemf_matrix(item.get("transform")), triangles)
+            if not triangles:
+                continue
+            stl = bytearray(84 + 50 * len(triangles))
+            stl[0:80] = b"PlatePilot from 3MF".ljust(80)
+            struct.pack_into("<I", stl, 80, len(triangles))
+            offset = 84
+            for tri in triangles:
+                STL_RECORD.pack_into(stl, offset, 0.0, 0.0, 0.0, *(v * scale for v in tri), 0)
+                offset += 50
+            result.append((objects.get(item.get("objectid"), ("",))[0], bytes(stl)))
+        return result
+
+
+_THREEMF_CACHE = {}   # (where, size, stamp) -> _threemf_parts(): opening, previewing and sending read it once
+
+
+def _threemf_cached(key, read):
+    if key not in _THREEMF_CACHE:
+        while len(_THREEMF_CACHE) >= 4:
+            _THREEMF_CACHE.pop(next(iter(_THREEMF_CACHE)))
+        _THREEMF_CACHE[key] = _threemf_parts(read())
+    return _THREEMF_CACHE[key]
+
+
+def _split_member(member):
+    """("file.3mf", 2) for the third object of a 3MF ("file.3mf#2"), (member, None) otherwise."""
+    base, _, index = str(member).rpartition("#")
+    if base.lower().endswith(".3mf") and index.isdigit():
+        return base, int(index)
+    return member, None
+
+
+def _threemf_part_rows(name, member, items):
+    """Parts for the objects of one 3MF: a single object is listed under the file's name."""
+    rows = []
+    for i, (object_name, stl) in enumerate(items):
+        stats = _binary_stl_info(stl)
+        label = name if len(items) == 1 else f"{name} · {object_name or i + 1}"
+        warning = "" if all(v > 0 for v in stats["dims"]) else _t("warn.empty_model")
+        rows.append({"name": label, "member": member if len(items) == 1 else f"{member}#{i}", "filetype": "3mf",
+                     "dims": stats["dims"], "facets": stats["facets"], "included": True, "warning": warning})
+    return rows
 
 
 def _footprint_hull(raw):
@@ -2589,12 +2769,19 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 raise ValueError(_t("err.folder_outside"))
             names = row["files"] if row else sorted(n for n in os.listdir(path) if _model_type_for_name(n))
             unsafe = [n for n in names if not _orca_can_read(os.path.join(path, n))]
-            readable = [n for n in names if n not in unsafe and _model_type_for_name(n) == "stl"
+            readable = [n for n in names if n not in unsafe and _model_type_for_name(n) in ("stl", "3mf")
                         and os.path.getsize(os.path.join(path, n)) <= MAX_STL_BYTES]
-            catalog = tuple((n, _t("warn.unsafe_name") if n in unsafe else "") for n in names if n not in readable)
+            catalog = tuple((n, _t("warn.unsafe_name") if n in unsafe else "") for n in names
+                            if n not in readable and _model_type_for_name(n) != "step")
             copy = _snapshot_folder(path, readable, self._storage("folders"))
             source = (copy, "folder", copy, catalog)
             parts = _read_loose_folder(copy, copy, catalog)
+            # STEP files are not copied: their part points at the original, which Orca opens.
+            steps = {n for n in names if _model_type_for_name(n) == "step"}
+            for part in parts:
+                if part["filetype"] == "step" and part["name"] in steps:
+                    part["member"] = os.path.join(path, part["name"])
+                    part["open_in_orca"] = part["name"] not in unsafe
         self._selected_source = source
         self._last_plan = None
         if row is not None and mark_seen:
@@ -2776,7 +2963,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         self._notice(_t("msg.deleted"), "ok")
 
     def _read_stl_blobs(self, source, parts, members):
-        """Read the selected STL files again from the current source, with the safety checks."""
+        """The meshes of the selected parts as binary STL, read again from the current source with
+        the safety checks; a 3MF object comes out of its file (read and converted once)."""
         by_member = {part.get("member"): part for part in parts if part.get("member")}
         blobs = {}
         if source[1] == "zip":
@@ -2786,19 +2974,61 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 for member in members:
                     if member not in by_member:
                         raise ValueError(_t("err.stl_left_archive"))
-                    info = zf.getinfo(member)
+                    path, index = _split_member(member)
+                    info = zf.getinfo(path)
                     if info.file_size > MAX_STL_BYTES:
                         raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
-                    blobs[member] = zf.read(info)
+                    if path.lower().endswith(".3mf"):
+                        items = _threemf_cached(("zip", source[0], path, info.file_size, info.CRC), lambda info=info: zf.read(info))
+                        blobs[member] = items[index or 0][1]
+                    else:
+                        blobs[member] = zf.read(info)
         else:
             for member in members:
-                if member not in by_member or not _safe_archive_path(member, source[2]):
+                path, index = _split_member(member)
+                if member not in by_member or not _safe_archive_path(path, source[2]):
                     raise ValueError(_t("err.stl_left_folder"))
-                with open(member, "rb") as stream:
+                if path.lower().endswith(".3mf"):
+                    size = os.path.getsize(path)
+                    if size > MAX_STL_BYTES:
+                        raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
+
+                    def read(path=path):
+                        with open(path, "rb") as stream:
+                            return stream.read()
+                    blobs[member] = _threemf_cached(("file", path, size, os.path.getmtime(path)), read)[index or 0][1]
+                    continue
+                with open(path, "rb") as stream:
                     blobs[member] = stream.read(MAX_STL_BYTES + 1)
                 if len(blobs[member]) > MAX_STL_BYTES:
                     raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
         return blobs
+
+    def _open_step_in_orca(self, config, index):
+        """Hand a STEP part to this Orca window, which reads STEP itself and asks how finely to
+        convert it. One inside an archive is taken out into PlatePilot's folder first."""
+        source = getattr(self, "_selected_source", None)
+        parts = self._current_parts(config)
+        if index < 0 or index >= len(parts) or not parts[index].get("open_in_orca"):
+            raise ValueError(_t("err.part_missing"))
+        part = parts[index]
+        if source[1] == "zip":
+            target = os.path.join(self._storage("step"), _safe_name(part["name"]))
+            with zipfile.ZipFile(source[0], "r") as zf:
+                info = zf.getinfo(part["member"])
+                if info.file_size > MAX_IMPORT_BYTES:
+                    raise ValueError(_t("err.import_size", name=part["name"], mb=MAX_IMPORT_BYTES // (1024 * 1024)))
+                with zf.open(info) as stream, open(target, "wb") as copy:
+                    shutil.copyfileobj(stream, copy, 1024 * 1024)
+            path = target
+        else:
+            path = part["member"]
+            if not os.path.isfile(path):
+                raise ValueError(_t("err.part_missing"))
+        if os.name != "nt":
+            raise OSError(_t("err.open_unsupported"))
+        _send_to_own_window(path)
+        self._notice(_t("msg.step_sent", name=part["name"]), "ok")
 
     def _start_native_arrange(self, config, included):
         if getattr(self, "_native_arrange_job", None):
@@ -2990,6 +3220,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 self._import_finish(config)
             elif kind == "import_cancel":
                 self._import_abort()
+            elif kind == "open_in_orca":
+                self._open_step_in_orca(config, int(data.get("index", -1)))
             elif kind == "preview_part":
                 source = getattr(self, "_selected_source", None)
                 parts = self._current_parts(config)
@@ -2997,16 +3229,11 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 if index < 0 or index >= len(parts):
                     raise ValueError(_t("err.part_missing"))
                 member = parts[index].get("member")
-                if not member or parts[index].get("filetype") != "stl":
+                if not member or parts[index].get("filetype") not in ("stl", "3mf") or parts[index].get("blocked"):
                     raise ValueError(_t("err.no_preview"))
-                if source[1] == "zip":
-                    with zipfile.ZipFile(source[0], "r") as zf:
-                        raw = zf.read(member)
-                else:
-                    if not _safe_archive_path(member, source[2]):
-                        raise ValueError(_t("err.stl_outside"))
-                    with open(member, "rb") as stream:
-                        raw = stream.read(MAX_STL_BYTES + 1)
+                if source[1] != "zip" and not _safe_archive_path(_split_member(member)[0], source[2]):
+                    raise ValueError(_t("err.stl_outside"))
+                raw = self._read_stl_blobs(source, parts, [member])[member]
                 # The page asks for fewer facets when it draws without WebGL.
                 limit = max(1000, min(MAX_PREVIEW_FACETS, int(data.get("max_facets") or MAX_PREVIEW_FACETS)))
                 # Simplifying a large part takes about a second, so the last few previews are kept.

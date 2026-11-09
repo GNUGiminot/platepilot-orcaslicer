@@ -676,6 +676,138 @@ class FakePage(pp.PlatePilotPage):
         return self.messages[-1] if self.messages else None
 
 
+def box_model(sx, sy, sz, object_id="1", name="box"):
+    """A 3MF <object> holding a box mesh."""
+    v = [(x, y, z) for x in (0, sx) for y in (0, sy) for z in (0, sz)]
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    tris = [t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))]
+    return (f'<object id="{object_id}" name="{name}" type="model"><mesh><vertices>'
+            + "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in v)
+            + "</vertices><triangles>" + "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in tris)
+            + "</triangles></mesh></object>")
+
+
+CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+PROD = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+
+
+def threemf(model, extra=None, unit="millimeter"):
+    """Bytes of a 3MF whose root model has `model` inside <model> (resources and build)."""
+    buffer = __import__("io").BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                        '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+                                        'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        archive.writestr("3D/3dmodel.model", f'<model unit="{unit}" xmlns="{CORE}" xmlns:p="{PROD}">{model}</model>')
+        for name, text in (extra or {}).items():
+            archive.writestr(name, text)
+    return buffer.getvalue()
+
+
+class ThreeMF(unittest.TestCase):
+    def dims(self, stl):
+        return pp._binary_stl_info(stl)["dims"]
+
+    def test_one_object_placed_and_scaled(self):
+        raw = threemf("<resources>" + box_model(10, 20, 5) + "</resources>"
+                      '<build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 100 50 0"/></build>')
+        items = pp._threemf_parts(raw)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0][0], "box")
+        self.assertEqual(self.dims(items[0][1]), [10.0, 20.0, 5.0])
+        inch = pp._threemf_parts(threemf("<resources>" + box_model(1, 2, 1) + '</resources><build><item objectid="1"/></build>', unit="inch"))
+        self.assertEqual([round(v, 3) for v in self.dims(inch[0][1])], [25.4, 50.8, 25.4])
+
+    def test_rotation_is_applied(self):
+        # A quarter turn about Z: 10 x 20 becomes 20 x 10.
+        raw = threemf("<resources>" + box_model(10, 20, 5) + '</resources><build><item objectid="1" transform="0 1 0 -1 0 0 0 0 1 0 0 0"/></build>')
+        self.assertEqual([round(v, 4) for v in self.dims(pp._threemf_parts(raw)[0][1])], [20.0, 10.0, 5.0])
+
+    def test_components_from_another_model_file_like_bambu_and_orca(self):
+        part_file = f'<model unit="millimeter" xmlns="{CORE}"><resources>' + box_model(10, 10, 10, "7") + "</resources><build/></model>"
+        raw = threemf('<resources><object id="2" name="pair" type="model"><components>'
+                      '<component p:path="/3D/Objects/object_1.model" objectid="7" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>'
+                      '<component p:path="/3D/Objects/object_1.model" objectid="7" transform="1 0 0 0 1 0 0 0 1 30 0 0"/>'
+                      '</components></object></resources><build><item objectid="2"/></build>',
+                      {"3D/Objects/object_1.model": part_file})
+        items = pp._threemf_parts(raw)
+        self.assertEqual([(n, self.dims(s)) for n, s in items], [("pair", [40.0, 10.0, 10.0])])
+
+    def test_several_objects_become_several_parts(self):
+        raw = threemf("<resources>" + box_model(10, 10, 10, "1", "left") + box_model(20, 5, 5, "2", "right") + "</resources>"
+                      '<build><item objectid="1"/><item objectid="2" transform="1 0 0 0 1 0 0 0 1 200 0 0"/></build>')
+        rows = pp._threemf_part_rows("kit.3mf", "kit.3mf", pp._threemf_parts(raw))
+        self.assertEqual([(r["name"], r["member"], r["dims"]) for r in rows],
+                         [("kit.3mf · left", "kit.3mf#0", [10.0, 10.0, 10.0]), ("kit.3mf · right", "kit.3mf#1", [20.0, 5.0, 5.0])])
+        self.assertEqual(pp._split_member("kit.3mf#1"), ("kit.3mf", 1))
+        self.assertEqual(pp._split_member("part#2.stl"), ("part#2.stl", None))
+
+    def test_a_broken_3mf_is_listed_with_its_error(self):
+        rows = pp._threemf_rows_or_warning("bad.3mf", "bad.3mf", ("t", "bad"), lambda: b"not a zip")
+        self.assertTrue(rows[0]["blocked"])
+        self.assertTrue(rows[0]["warning"])
+
+    def test_an_archive_with_a_3mf_previews_lays_out_and_exports(self):
+        raw = threemf("<resources>" + box_model(30, 20, 10, "1", "a") + box_model(15, 15, 15, "2", "b") + "</resources>"
+                      '<build><item objectid="1"/><item objectid="2"/></build>')
+        with tempfile.TemporaryDirectory() as storage, tempfile.TemporaryDirectory() as root:
+            root = os.path.realpath(root)
+            with zipfile.ZipFile(os.path.join(root, "kit.zip"), "w") as archive:
+                archive.writestr("kit.3mf", raw)
+                archive.writestr("bracket.step", b"ISO-10303-21;")
+            page = FakePage(storage)
+            page.config_text = json.dumps({"folders": [root]})
+            page.send({"type": "scan"})
+            page.send({"type": "open_model", "path": os.path.join(root, "kit.zip"), "kind": "zip"})
+            parts = next(m for m in page.messages if m.get("type") == "archive")["parts"]
+            by_name = {p["name"]: p for p in parts}
+            self.assertEqual(by_name["kit.3mf · a"]["filetype"], "3mf")
+            self.assertTrue(by_name["kit.3mf · a"]["included"])
+            self.assertTrue(by_name["bracket.step"]["open_in_orca"])
+            index = [p["name"] for p in parts].index("kit.3mf · b")
+            preview = page.send({"type": "preview_part", "index": index})
+            self.assertEqual(preview["type"], "preview")
+            self.assertEqual([round(v, 3) for v in preview["dims"]], [15.0, 15.0, 15.0])
+            members = [p["member"] for p in parts if p["filetype"] == "3mf"]
+            saved = pp._get_profile
+            pp._get_profile = lambda: {"name": "Test printer", "size": {"x": 245, "y": 245}, "height": 250}
+            try:
+                plan = page.send({"type": "plan", "margin": 4, "included": members})
+            finally:
+                pp._get_profile = saved
+            self.assertEqual(plan["type"], "plan")
+            self.assertEqual(sorted(it["name"] for plate in plan["plates"] for it in plate["items"]), ["kit.3mf · a", "kit.3mf · b"])
+            blobs = page._read_stl_blobs(page._selected_source, page._current_parts(page._config()), members)
+            self.assertEqual([pp._binary_stl_info(blobs[m])["dims"] for m in members], [[30.0, 20.0, 10.0], [15.0, 15.0, 15.0]])
+
+    def test_a_step_part_is_handed_to_orca(self):
+        sent = []
+        saved = pp._send_to_own_window
+        pp._send_to_own_window = sent.append
+        try:
+            with tempfile.TemporaryDirectory() as storage, tempfile.TemporaryDirectory() as root:
+                root = os.path.realpath(root)
+                with zipfile.ZipFile(os.path.join(root, "kit.zip"), "w") as archive:
+                    archive.writestr("bracket.step", b"ISO-10303-21; step data")
+                page = FakePage(storage)
+                page.config_text = json.dumps({"folders": [root]})
+                page.send({"type": "scan"})
+                page.send({"type": "open_model", "path": os.path.join(root, "kit.zip"), "kind": "zip"})
+                parts = next(m for m in page.messages if m.get("type") == "archive")["parts"]
+                if os.name == "nt":
+                    page.send({"type": "open_in_orca", "index": 0})
+                    self.assertEqual(len(sent), 1)
+                    with open(sent[0], "rb") as stream:
+                        self.assertEqual(stream.read(), b"ISO-10303-21; step data")
+                    self.assertTrue(pp._is_inside(sent[0], storage))
+                else:
+                    with self.assertRaises(AssertionError):
+                        page.send({"type": "open_in_orca", "index": 0})
+                self.assertEqual(parts[0]["filetype"], "step")
+        finally:
+            pp._send_to_own_window = saved
+
+
 class DropIntoPlatePilot(unittest.TestCase):
     def test_dropped_files_are_copied_listed_and_opened(self):
         with tempfile.TemporaryDirectory() as storage:

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0 (not released)
+
+- **3MF files work like STL:** preview, layout and Open in Prepare. Each object of a 3MF becomes a part of its own, placed and turned as the 3MF has it, in millimetres whatever unit the file uses; objects made of components, also from the separate model files of Bambu and Orca projects, are put together. A 3MF is read once when its source is opened (about 2 s for 500 000 facets); scanning folders and starting the plugin are not slower.
+- **STEP parts get an Open in Orca button.** PlatePilot does not convert STEP itself (that would take a heavy engine): it hands the file to the Orca window, which opens it in Prepare and asks how finely to convert it. A STEP inside an archive is taken out into PlatePilot's folder first. Windows only, like the project hand-over.
+
 ## 0.6.3
 
 - **Folders and files with Cyrillic or other non-Latin names on OrcaSlicer 2.5.0 and later.** Orca's plugin permission check used to break on such names (the plugin call hung and Orca could crash), so PlatePilot skipped them. Our fix for that, OrcaSlicer#16925, is in the 2.5.0 release, so there they are listed, opened and watched like any other. Older 2.5 builds (2.5.0-dev, betas) keep the old protection. Folders named config, cert or secret are still refused: Orca refuses them on purpose.
