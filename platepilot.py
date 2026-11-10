@@ -2310,7 +2310,7 @@ def _project_base(source_name):
     """A project's name from its source: the archive without ".zip", or the folder's name; with
     only what Windows allows in a file name, and transliterated where this Orca build cannot
     take non-Latin letters (see _orca_can_read)."""
-    name = os.path.basename(str(source_name or "").rstrip("\\/"))
+    name = re.split(r"[\\/]", str(source_name or "").rstrip("\\/"))[-1]   # either separator, on any system
     if name.lower().endswith(".zip"):
         name = name[:-4]
     if _orca_handles_non_latin():
