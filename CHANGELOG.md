@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- **Projects are named after their source:** "Dragon set - PlatePilot.3mf" instead of "PlatePilot-20261103-153137.3mf", in both arrange modes, so Orca's title bar and recent projects show what was laid out. The same source keeps one file: a later layout of it replaces the file PlatePilot wrote last, so Orca's recent list does not fill up with copies. Once the project was changed and saved in Orca, PlatePilot leaves it alone and writes "... (2)". Projects are kept in a projects folder in PlatePilot's data folder.
+
 ## 0.7.0
 
 - **3MF files work like STL:** preview, layout and Open in Prepare. Each object of a 3MF becomes a part of its own, placed and turned as the 3MF has it, in millimetres whatever unit the file uses; objects made of components, also from the separate model files of Bambu and Orca projects, are put together. A 3MF is read once when its source is opened (about 2 s for 500 000 facets); scanning folders and starting the plugin are not slower.

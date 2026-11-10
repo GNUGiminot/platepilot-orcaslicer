@@ -808,6 +808,65 @@ class ThreeMF(unittest.TestCase):
             pp._send_to_own_window = saved
 
 
+class ProjectName(unittest.TestCase):
+    """Projects are named after their source and reused while Orca has not changed them."""
+
+    def test_names_from_sources(self):
+        self.assertEqual(pp._project_base("Dragon set.zip"), "Dragon set")
+        self.assertEqual(pp._project_base("G:\\Download\\Gears v2\\"), "Gears v2")
+        self.assertEqual(pp._project_base('a<b>:c?.zip'), "a_b__c_")
+        self.assertEqual(pp._project_base(""), "PlatePilot")
+        saved = getattr(pp.orca.host, "app_info", None)
+        try:
+            pp._NON_LATIN_OK.clear()
+            pp.orca.host.app_info = lambda: {"version": "2.4.2"}
+            self.assertEqual(pp._project_base("Дракон.zip"), "Drakon")
+            pp._NON_LATIN_OK.clear()
+            pp.orca.host.app_info = lambda: {"version": "2.5.0"}
+            self.assertEqual(pp._project_base("Дракон.zip"), "Дракон")
+        finally:
+            pp._NON_LATIN_OK.clear()
+            if saved is None:
+                del pp.orca.host.app_info
+            else:
+                pp.orca.host.app_info = saved
+
+    def test_export_uses_the_source_name_and_reuses_it_until_orca_changes_it(self):
+        saved = (pp._get_profile, pp._project_settings, pp._app_version, pp._open_project)
+        opened = []
+        pp._get_profile = lambda: {"name": "Test printer", "size": {"x": 245, "y": 245}, "height": 250}
+        pp._project_settings = lambda: "{}"
+        pp._app_version = lambda: "2.5.0"
+        pp._open_project = opened.append
+        try:
+            with tempfile.TemporaryDirectory() as storage, tempfile.TemporaryDirectory() as root:
+                root = os.path.realpath(root)
+                with zipfile.ZipFile(os.path.join(root, "Dragon set.zip"), "w") as archive:
+                    archive.writestr("body.stl", box_stl(30, 20, 10))
+                page = FakePage(storage)
+                page.config_text = json.dumps({"folders": [root]})
+                page.send({"type": "scan"})
+                page.send({"type": "open_model", "path": os.path.join(root, "Dragon set.zip"), "kind": "zip"})
+
+                def export():
+                    page.send({"type": "plan", "margin": 4, "included": ["body.stl"]})
+                    return page.send({"type": "export_project"})["path"]
+
+                first = export()
+                self.assertEqual(os.path.basename(first), "Dragon set - PlatePilot.3mf")
+                self.assertTrue(pp._is_inside(first, os.path.join(storage, "projects")))
+                with zipfile.ZipFile(first) as project:
+                    self.assertIn('<metadata name="Title">Dragon set</metadata>', project.read("3D/3dmodel.model").decode())
+                self.assertEqual(export(), first)              # unchanged: replaced, one entry in Orca's list
+                with open(first, "ab") as stream:              # saved over in Orca
+                    stream.write(b" ")
+                second = export()
+                self.assertEqual(os.path.basename(second), "Dragon set - PlatePilot (2).3mf")
+                self.assertEqual(opened, [first, first, second])
+        finally:
+            pp._get_profile, pp._project_settings, pp._app_version, pp._open_project = saved
+
+
 class DropIntoPlatePilot(unittest.TestCase):
     def test_dropped_files_are_copied_listed_and_opened(self):
         with tempfile.TemporaryDirectory() as storage:

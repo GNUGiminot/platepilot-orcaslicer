@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.7.0"
+# version = "0.7.1"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -21,14 +21,14 @@ import struct
 import subprocess
 import sys
 import time
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 import xml.etree.ElementTree as ElementTree
 import zipfile
 
 import orca
 
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -2306,7 +2306,21 @@ def _plate_origins(count, bed_x, bed_y):
     return [((i % cols) * stride_x, -(i // cols) * stride_y) for i in range(count)]
 
 
-def _write_orca_project(path, plates, model_blobs, profile, app_version, project_settings):
+def _project_base(source_name):
+    """A project's name from its source: the archive without ".zip", or the folder's name; with
+    only what Windows allows in a file name, and transliterated where this Orca build cannot
+    take non-Latin letters (see _orca_can_read)."""
+    name = os.path.basename(str(source_name or "").rstrip("\\/"))
+    if name.lower().endswith(".zip"):
+        name = name[:-4]
+    if _orca_handles_non_latin():
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip().rstrip(". ")
+    else:
+        name = _safe_name(name, "")
+    return name[:80] or "PlatePilot"
+
+
+def _write_orca_project(path, plates, model_blobs, profile, app_version, project_settings, title="PlatePilot layout"):
     """Write an Orca multi-plate 3MF with the active settings (see _project_settings()).
 
     Orca rebuilds plate membership from object positions when it loads a project,
@@ -2343,7 +2357,7 @@ def _write_orca_project(path, plates, model_blobs, profile, app_version, project
             emit('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">')
             emit(f'<metadata name="Application">OrcaSlicer-{app_version}</metadata>'
                  '<metadata name="BambuStudio:3mfVersion">1</metadata>'
-                 '<metadata name="Title">PlatePilot layout</metadata><resources>')
+                 '<metadata name="Title">' + escape(title) + '</metadata><resources>')
             for plate_index, plate in enumerate(plates):
                 plate_x, plate_y = origins[plate_index]
                 current_plate = []
@@ -2577,6 +2591,34 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         os.makedirs(folder, exist_ok=True)
         return folder
 
+    def _project_path(self, source_name):
+        """Where to write the project of the open source: "<source> - PlatePilot.3mf" in the
+        plugin's projects folder. The same name is reused while the file there is the one
+        PlatePilot last wrote (Orca's recent list then keeps one entry per source); once it was
+        changed, saved over in Orca for one, the next number is taken instead of replacing it."""
+        folder = self._storage("projects")
+        base = _project_base(source_name) + " - PlatePilot"
+        written = self._library().setdefault("projects", {})
+        for n in range(1, 100):
+            path = os.path.join(folder, base + ("" if n == 1 else f" ({n})") + ".3mf")
+            if not os.path.exists(path):
+                return path
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            if written.get(path) == [stat.st_size, stat.st_mtime_ns]:
+                return path
+        return os.path.join(folder, base + time.strftime(" %Y%m%d-%H%M%S") + ".3mf")
+
+    def _remember_project(self, path):
+        stat = os.stat(path)
+        written = self._library().setdefault("projects", {})
+        written[path] = [stat.st_size, stat.st_mtime_ns]
+        for gone in [p for p in written if not os.path.exists(p)]:
+            del written[gone]
+        self._save_library()
+
     def _added_root(self):
         return self._storage("added")
 
@@ -2783,6 +2825,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     part["member"] = os.path.join(path, part["name"])
                     part["open_in_orca"] = part["name"] not in unsafe
         self._selected_source = source
+        self._selected_name = row["name"] if row is not None else os.path.basename(path)
         self._last_plan = None
         if row is not None and mark_seen:
             self._mark_seen([row])
@@ -3078,7 +3121,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             self._native_arrange_job = {
                 "process": process, "run_dir": run_dir, "input_dir": input_dir, "output": output,
                 "log": log_path, "count": len(inputs), "started": time.time(), "project_settings": project_settings,
-                "names": names,
+                "names": names, "source_name": getattr(self, "_selected_name", "") or os.path.basename(source[0]),
             }
             self.post_message({"type": "native_arrange_started", "count": len(inputs)})
         except Exception:
@@ -3114,6 +3157,10 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             _finish_cli_project(job["output"], job["project_settings"], job["names"])
             plate_count = _count_plates(job["output"])
             left_out = _cli_unplaced(job["run_dir"])
+            final = self._project_path(job.get("source_name", ""))
+            os.replace(job["output"], final)
+            job["output"] = final
+            self._remember_project(final)
             _open_project(job["output"])
             message = _t("msg.arranged", parts=_plural("plan.parts", job["count"]), plates=_plural("plan.plates", max(1, plate_count)))
             if left_out:
@@ -3300,9 +3347,11 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                             raise ValueError(_t("err.stl_changed"))
                 members = {item.get("member") for plate in plan["plates"] for item in plate["items"]}
                 blobs = self._read_stl_blobs(source, parts, members)
-                storage = orca.host.plugin.storage()
-                output = os.path.join(storage, "PlatePilot-" + time.strftime("%Y%m%d-%H%M%S") + ".3mf")
-                _write_orca_project(output, plan["plates"], blobs, plan["profile"], _app_version(), _project_settings())
+                name = getattr(self, "_selected_name", "") or os.path.basename(source[0])
+                output = self._project_path(name)
+                _write_orca_project(output, plan["plates"], blobs, plan["profile"], _app_version(), _project_settings(),
+                                    title=_project_base(name))
+                self._remember_project(output)
                 try:
                     _open_project(output)
                     self.post_message({"type": "project_ready", "path": output, "opened": True})
