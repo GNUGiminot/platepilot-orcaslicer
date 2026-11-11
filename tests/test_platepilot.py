@@ -867,6 +867,148 @@ class ProjectName(unittest.TestCase):
             pp._get_profile, pp._project_settings, pp._app_version, pp._open_project = saved
 
 
+def boxes_stl(*boxes):
+    """Binary STL of several boxes, each (x0, y0, z0, x1, y1, z1), as separate shells."""
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    raw = bytearray(80) + struct.pack("<I", 12 * len(boxes))
+    for x0, y0, z0, x1, y1, z1 in boxes:
+        v = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+        for a, b, c, d in quads:
+            for tri in ((v[a], v[b], v[c]), (v[a], v[c], v[d])):
+                raw += struct.pack("<3f", 0, 0, 0) + struct.pack("<9f", *[q for p in tri for q in p]) + b"\0\0"
+    return bytes(raw)
+
+
+MUSHROOM = boxes_stl((15, 15, 0, 25, 25, 24), (0, 0, 20, 40, 40, 24))      # a table on its leg, top in the air
+SIDEWAYS = boxes_stl((0, 15, 15, 24, 25, 25), (20, 0, 0, 24, 40, 40))      # the same table lying on its edge
+
+
+class Orientation(unittest.TestCase):
+    """Parts lying worse than they could are pointed out, and turned only when asked."""
+
+    def test_a_part_lying_well_is_left_alone(self):
+        self.assertIsNone(pp._orientation_advice(box_stl(30, 20, 10)))
+        self.assertIsNone(pp._orientation_advice(boxes_stl((15, 15, 0, 25, 25, 24), (0, 0, 0, 40, 40, 4))))
+
+    def test_an_upside_down_part_is_flagged(self):
+        advice = pp._orientation_advice(MUSHROOM)
+        self.assertEqual(advice["down"], [0.0, 0.0, 1.0])
+        self.assertEqual(advice["pct"], 100)
+        self.assertEqual(advice["overhang_now"], 1600.0)
+        self.assertEqual(advice["overhang_new"], 0.0)
+        turned = pp._turned_stl(MUSHROOM, pp._rotation_to_down(advice["down"]))
+        self.assertEqual(pp._binary_stl_info(turned)["dims"], [40.0, 40.0, 24.0])
+        self.assertIsNone(pp._orientation_advice(turned))
+
+    def test_a_part_on_its_edge_is_laid_flat(self):
+        advice = pp._orientation_advice(SIDEWAYS)
+        self.assertEqual(advice["down"], [1.0, 0.0, 0.0])
+        self.assertEqual((advice["height_now"], advice["height_new"]), (40.0, 24.0))
+        turned = pp._turned_stl(SIDEWAYS, pp._rotation_to_down(advice["down"]))
+        self.assertEqual([round(v, 3) for v in pp._binary_stl_info(turned)["dims"]], [40.0, 40.0, 24.0])
+
+    def test_rotation_puts_the_side_down(self):
+        for d in ((0, 0, -1), (0, 0, 1), (1, 0, 0), (0, -1, 0), (0.6, 0.0, 0.8), (0.48, 0.6, -0.64)):
+            rows = pp._rotation_to_down(d)
+            moved = [sum(r * v for r, v in zip(row, d)) for row in rows]
+            for got, want in zip(moved, (0, 0, -1)):
+                self.assertAlmostEqual(got, want, places=9)
+            for i in range(3):                                  # still a rotation
+                for j in range(3):
+                    self.assertAlmostEqual(sum(rows[i][k] * rows[j][k] for k in range(3)), float(i == j), places=9)
+
+    def test_big_meshes_are_sampled_with_the_right_weight(self):
+        triangles, weight = pp._sample_triangles(boxes_stl(*[(i, 0, 0, i + 1, 1, 1) for i in range(10)]), limit=30)
+        self.assertEqual((len(triangles), weight), (30, 4))
+
+    def open_zip(self, storage, root):
+        with zipfile.ZipFile(os.path.join(root, "set.zip"), "w") as archive:
+            archive.writestr("box.stl", box_stl(30, 20, 10))
+            archive.writestr("side.stl", SIDEWAYS)
+            archive.writestr("up.stl", MUSHROOM)
+        page = FakePage(storage)
+        page.config_text = json.dumps({"folders": [root]})
+        page.send({"type": "scan"})
+        page.send({"type": "open_model", "path": os.path.join(root, "set.zip"), "kind": "zip"})
+        return page
+
+    def check_all(self, page):
+        index, found = 0, {}
+        while index >= 0:
+            reply = page.send({"type": "orient_check", "index": index})
+            self.assertEqual(reply["type"], "orient_advice")
+            if reply.get("advice"):
+                found[page._open_parts[reply["index"]]["name"]] = reply["index"]
+            index = reply["next"]
+        self.assertEqual((reply["done"], reply["total"], reply["advised"]), (3, 3, 2))
+        return found
+
+    def test_checking_and_turning_from_the_page(self):
+        with tempfile.TemporaryDirectory() as storage, tempfile.TemporaryDirectory() as root:
+            root = os.path.realpath(root)
+            page = self.open_zip(storage, root)
+            found = self.check_all(page)
+            self.assertEqual(sorted(found), ["side.stl", "up.stl"])
+            config = json.loads(page.config_text)
+            source = page._selected_source
+
+            def dims(name):
+                return [round(v, 3) for v in next(p for p in page._current_parts(config) if p["name"] == name)["dims"]]
+
+            self.assertEqual(dims("side.stl"), [24.0, 40.0, 40.0])      # nothing turns until asked
+            reply = page.send({"type": "turn_part", "index": found["side.stl"], "on": True})
+            self.assertEqual(reply["type"], "parts_turned")
+            self.assertEqual([round(v, 3) for v in reply["parts"][0]["dims"]], [40.0, 40.0, 24.0])
+            self.assertEqual(dims("side.stl"), [40.0, 40.0, 24.0])
+            parts = page._current_parts(config)
+            blob = page._read_stl_blobs(source, parts, ["side.stl"])["side.stl"]
+            self.assertEqual([round(v, 3) for v in pp._binary_stl_info(blob)["dims"]], [40.0, 40.0, 24.0])
+            self.assertEqual(page._read_stl_blobs(source, parts, ["side.stl"], turned=False)["side.stl"], SIDEWAYS)
+
+            reply = page.send({"type": "turn_all"})                      # only the ones not turned yet
+            self.assertEqual([p["index"] for p in reply["parts"]], [found["up.stl"]])
+            self.assertEqual(sorted(page._turns), ["side.stl", "up.stl"])
+
+            reply = page.send({"type": "turn_part", "index": found["side.stl"], "on": False})
+            self.assertEqual(reply["parts"][0]["turned"], False)
+            self.assertEqual(dims("side.stl"), [24.0, 40.0, 40.0])
+            reply = page.send({"type": "turn_part", "index": 0, "on": True})     # no advice for the box: ignored
+            self.assertEqual(reply["parts"], [])
+
+            page.send({"type": "open_model", "path": os.path.join(root, "set.zip"), "kind": "zip"})
+            self.assertEqual((page._advice, page._turns), ({}, {}))     # a source opens as it is
+
+    def test_orca_arrange_can_orient_and_takes_turned_parts(self):
+        saved = (pp._get_profile, pp._project_settings, pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen)
+        commands = []
+        pp._get_profile = lambda: {"name": "Test printer", "size": {"x": 245, "y": 245}, "height": 250}
+        pp._project_settings = lambda: "{}"
+        pp._orca_executable = lambda: "orca-slicer"
+        pp._write_cli_settings = lambda folder: ["machine.json"]
+        pp.subprocess.Popen = lambda command, **kw: commands.append(command) or types.SimpleNamespace(poll=lambda: None)
+        try:
+            with tempfile.TemporaryDirectory() as storage, tempfile.TemporaryDirectory() as root:
+                root = os.path.realpath(root)
+                page = self.open_zip(storage, root)
+                found = self.check_all(page)
+                page.send({"type": "turn_part", "index": found["side.stl"], "on": True})
+                page.send({"type": "native_arrange", "included": ["box.stl", "side.stl"]})
+                self.assertNotIn("--orient", commands[0])
+                inputs = [a for a in commands[0] if a.endswith(".stl")]
+                self.assertEqual(len(inputs), 2)
+                with open(inputs[1], "rb") as stream:
+                    self.assertEqual([round(v, 3) for v in pp._binary_stl_info(stream.read())["dims"]], [40.0, 40.0, 24.0])
+                page._native_arrange_job = None
+                page.send({"type": "save_settings", "config": {"orca_orient": True}})
+                time.sleep(1.1)                                      # run folders are named to the second
+                page.send({"type": "native_arrange", "included": ["box.stl"]})
+                at = commands[1].index("--orient")
+                self.assertEqual(commands[1][at + 1], "1")
+                self.assertLess(commands[1].index("--arrange"), at)
+        finally:
+            pp._get_profile, pp._project_settings, pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen = saved
+
+
 class DropIntoPlatePilot(unittest.TestCase):
     def test_dropped_files_are_copied_listed_and_opened(self):
         with tempfile.TemporaryDirectory() as storage:

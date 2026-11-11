@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.7.1"
+# version = "0.8.0"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -28,7 +28,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -66,7 +66,7 @@ CLI_SKIP_KEYS = {
     "compatible_prints_condition", "print_settings_id", "printer_settings_id", "filament_settings_id",
 }
 DEFAULT_CONFIG = {
-    "folders": [], "hidden": {}, "check_on_open": True, "recursive": True, "gpu_preview": True,
+    "folders": [], "hidden": {}, "check_on_open": True, "recursive": True, "gpu_preview": True, "orca_orient": False,
     "margin_mm": DEFAULT_MARGIN_MM,
     "model_types": ["stl", "step", "3mf"], "arrange_mode": "own", "language": "auto",
 }
@@ -95,6 +95,19 @@ STRINGS = {
     "mode.own": ("PlatePilot layout", "Раскладка PlatePilot"),
     "mode.orca": ("Orca auto-arrange", "Авторасстановка Orca"),
     "mode.gap": ("Gap", "Зазор"),
+    "mode.orient": ("Turn parts (Orca auto-orient)", "Поворачивать детали (автоповорот Orca)"),
+    "mode.orient_tip": ("Orca turns every part the way its Auto orient button would before arranging: less overhang, a steady base. Off: parts lie as their files have them, as their designers meant.",
+                        "Перед расстановкой Orca поворачивает каждую деталь, как кнопка «Автоповорот»: меньше нависаний, устойчивое основание. Выключено — детали лежат как в файлах, как задумал автор."),
+    "orient.checking": ("Checking how the parts lie… {done}/{total}", "Проверяю, как лежат детали… {done}/{total}"),
+    "orient.done": ("{n} part could lie better: see Turn in the list|{n} parts could lie better: see Turn in the list",
+                    "{n} деталь лучше повернуть: см. «Повернуть» в списке|{n} детали лучше повернуть: см. «Повернуть» в списке|{n} деталей лучше повернуть: см. «Повернуть» в списке"),
+    "orient.advice": ("lies better turned: {pct}% less overhang", "лучше повернуть: нависаний меньше на {pct}%"),
+    "orient.turned": ("turned: {pct}% less overhang", "повёрнута: нависаний меньше на {pct}%"),
+    "btn.turn": ("Turn", "Повернуть"),
+    "btn.unturn": ("Undo turn", "Вернуть"),
+    "btn.turn_all": ("Turn all suggested ({n})", "Повернуть все предложенные ({n})"),
+    "btn.turn_all_tip": ("Turn every part PlatePilot found lying worse than it could: upside down, on a narrow edge, with avoidable overhangs",
+                         "Повернуть все детали, которые лежат хуже, чем могли бы: вверх ногами, на узкой грани, с лишними нависаниями"),
     "mode.plates": ("Plates", "Столов"),
     "mode.plates_auto": ("auto", "авто"),
     "mode.plates_tip": ("How many plates to spread the parts over. Empty: as few as they fit on. More than that spreads them evenly, even if they would fit on one.",
@@ -425,6 +438,8 @@ input[type=number]{width:76px}
 .part{display:flex;gap:10px;align-items:center;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer}.part:hover{background:var(--surface-2)}.part.on{background:var(--accent-soft)}
 .part.off{cursor:default;opacity:.62}
 .part.ext{cursor:default}.part.ext .t{opacity:.62}
+.orient-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 12px 8px;font-size:12px;color:var(--muted)}.orient-bar span{flex:1 1 200px}
+.part .tip{color:var(--accent)}
 button.small{height:26px;padding:0 10px;font-size:12px;flex:none}.part .t{min-width:0;flex:1}.part .n{overflow-wrap:anywhere;line-height:1.3}.part .m{color:var(--muted);font-size:11.5px;margin-top:2px}
 .check{appearance:none;width:18px;height:18px;margin:0;flex:none;border-radius:5px;border:1.5px solid color-mix(in srgb,var(--fg) 30%,transparent);background:var(--raised);display:grid;place-items:center;cursor:pointer;padding:0}
 .check:checked{background:var(--accent);border-color:var(--accent)}.check:checked::after{content:"";width:9px;height:5px;border:2px solid #fff;border-top:0;border-right:0;transform:translateY(-1px) rotate(-45deg)}.check:disabled{opacity:.4;cursor:default}
@@ -525,6 +540,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
   <div class="split">
    <div class="card parts">
     <div class="card-head"><h2 data-i18n="parts.title">Parts</h2><span id="partCount" class="count">0</span><span class="spacer"></span><button id="all" class="ghost" data-i18n="parts.all">All</button><button id="none" class="ghost" data-i18n="parts.none">None</button></div>
+    <div id="orientBar" class="orient-bar" hidden><span id="orientNote"></span><button id="turnAll" class="small" data-i18n-title="btn.turn_all_tip" title="Turn every suggested part"></button></div>
     <div id="parts" class="part-list"></div>
    </div>
    <div class="card viewer">
@@ -543,6 +559,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
     <button id="plan"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="btn.plan">Calculate</span></button>
     <button id="planSmart" data-i18n-title="btn.plan_smart_tip" title="Beta: parts grouped in the middle of each plate"><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.plan_smart">Smart layout</span><span class="beta">β</span></button>
     <button id="sendPrepare" class="primary" disabled><svg class="ic"><use href="#i-send"/></svg><span data-i18n="btn.send">Open in Prepare</span></button>
+    <label class="field" id="orientField" data-i18n-title="mode.orient_tip" title="Orca auto-orient" hidden><input id="orcaOrient" type="checkbox"> <span data-i18n="mode.orient">Turn parts (Orca auto-orient)</span></label>
     <button id="nativeArrange" class="primary" hidden><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.arrange">Arrange in Orca</span></button>
    </div>
    <div id="modeNote" class="mode-note"></div>
@@ -614,11 +631,11 @@ function finishAsk(yes){const p=S.pending;S.pending=null;$('modal').hidden=true;
 function openDrawer(open){$('drawer').classList.toggle('open',open);$('scrim').classList.toggle('open',open)}
 
 /* settings */
-function applyConfig(c){S.config=c||{};$('checkOnOpen').checked=S.config.check_on_open!==false;$('recursive').checked=S.config.recursive!==false;$('gpuPreview').checked=S.config.gpu_preview!==false;const types=S.config.model_types||['stl','step','3mf'];for(const [k,id] of [['stl','modelStl'],['step','modelStep'],['3mf','model3mf']]){$(id).checked=types.includes(k);$(id).parentElement.classList.toggle('on',types.includes(k))}if(S.config.margin_mm!=null)$('margin').value=S.config.margin_mm;$('language').value=S.config.language||'auto';setMode(S.config.arrange_mode||'own',false);renderFolders()}
+function applyConfig(c){S.config=c||{};$('orcaOrient').checked=!!S.config.orca_orient;$('checkOnOpen').checked=S.config.check_on_open!==false;$('recursive').checked=S.config.recursive!==false;$('gpuPreview').checked=S.config.gpu_preview!==false;const types=S.config.model_types||['stl','step','3mf'];for(const [k,id] of [['stl','modelStl'],['step','modelStep'],['3mf','model3mf']]){$(id).checked=types.includes(k);$(id).parentElement.classList.toggle('on',types.includes(k))}if(S.config.margin_mm!=null)$('margin').value=S.config.margin_mm;$('language').value=S.config.language||'auto';setMode(S.config.arrange_mode||'own',false);renderFolders()}
 function when(sec){const d=new Date(sec*1000),hm=d.toLocaleTimeString(locale(),{hour:'2-digit',minute:'2-digit'});return d.toDateString()===new Date().toDateString()?hm:d.toLocaleDateString(locale(),{day:'numeric',month:'short'})+' '+hm}
 function folderMeta(f){if(!f||f.checked==null)return esc(t('folders.never'));if(f.missing)return `<span class="warn">${esc(t('folders.missing'))}</span>`;if(f.unreadable)return `<span class="warn">${esc(t('folders.unreadable'))}</span>`;const out=[esc(t('folders.stats',{sources:plural('folders.sources',f.sources||0),time:when(f.checked)}))];if(f.new)out.push(`<b>${esc(t('folders.new',{n:f.new}))}</b>`);if(f.other)out.push(esc(t('folders.other',{n:f.other})));if(f.empty)out.push(esc(t('folders.empty',{n:f.empty})));if(f.skipped)out.push(`<span class="warn">${esc(t('folders.skipped',{n:f.skipped}))}</span>`);if(f.truncated)out.push(`<span class="warn">${esc(t('folders.truncated',{n:f.truncated}))}</span>`);return out.join(' · ')}
 function renderFolders(){const folders=S.config.folders||[],info=p=>S.folders.find(f=>f.path===p&&f.origin==='watched'),added=S.folders.find(f=>f.origin==='added');let html=folders.length?folders.map(p=>`<div class="folder">${icon('folder')}<div class="p">${esc(p)}<div class="fm">${folderMeta(info(p))}</div></div><button class="icon ghost" title="${esc(t('folders.remove'))}" data-remove="${esc(p)}">${icon('x')}</button></div>`).join(''):`<div class="muted">${esc(t('folders.none'))}</div>`;if(added)html+=`<div class="folder added">${icon('plus')}<div class="p">${esc(t('folders.added'))}<div class="fm">${folderMeta(added)} · ${esc(t('folders.added_note'))}</div></div></div>`;$('folderList').innerHTML=html;document.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{if(S.busy)return;S.scanning=true;setBusy(true);send('remove_folder',{path:b.dataset.remove})})}
-function saveUiSettings(){S.config.check_on_open=$('checkOnOpen').checked;S.config.recursive=$('recursive').checked;S.config.gpu_preview=$('gpuPreview').checked;S.config.model_types=['stl','step','3mf'].filter(k=>$(k==='stl'?'modelStl':k==='step'?'modelStep':'model3mf').checked);S.config.margin_mm=Math.max(0,Math.min(20,Number($('margin').value)||0));S.config.arrange_mode=S.mode;S.config.language=$('language').value;send('save_settings',{config:S.config})}
+function saveUiSettings(){S.config.orca_orient=$('orcaOrient').checked;S.config.check_on_open=$('checkOnOpen').checked;S.config.recursive=$('recursive').checked;S.config.gpu_preview=$('gpuPreview').checked;S.config.model_types=['stl','step','3mf'].filter(k=>$(k==='stl'?'modelStl':k==='step'?'modelStep':'model3mf').checked);S.config.margin_mm=Math.max(0,Math.min(20,Number($('margin').value)||0));S.config.arrange_mode=S.mode;S.config.language=$('language').value;send('save_settings',{config:S.config})}
 
 /* printer */
 function setProfile(p){S.profile=p||null;if(!p||p.error){$('printer').innerHTML=`<span class="pill warn">${esc(t('printer.unreadable'))}</span><span class="name muted">${esc(p&&p.error||'')}</span>`;return}const s=p.size||{};$('printer').innerHTML=`<span class="name" title="${esc(p.name)}">${esc(p.name||'—')}</span><span class="spec"><span class="pill accent">${fmt(s.x)} × ${fmt(s.y)} ${esc(t('unit.mm'))}</span><span class="pill">Z ${fmt(p.height)}</span>${p.exclusions?`<span class="pill warn" title="${esc(t('printer.zones_tip'))}">${esc(t('printer.zones'))}</span>`:''}</span>`;if(S.mesh)renderMesh()}
@@ -643,9 +660,16 @@ function renderArchives(){const q=$('filter').value.trim().toLowerCase();renderR
 function clearSource(note){S.selected=null;S.parts=[];S.plan=null;S.mesh=null;S.previewIndex=-1;renderSourceHead();renderParts(note);renderPlan(null);drawEmptyView()}
 function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;const action=S.selectedAdded?`<button id="deleteSelected" class="ghost" title="${esc(t('src.delete_tip'))}">${icon('x')}${esc(t('src.delete'))}</button>`:`<button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('sourceHead').innerHTML=`<div class="glyph ${kindClass(S.selectedKind,S.selectedAdded)}">${icon(S.selectedKind==='folder'?'models':'zip')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div>${action}`;if(S.selectedAdded)$('deleteSelected').onclick=()=>ask(t('delete.title'),t('delete.body',{name:S.selectedName}),'delete',{path:S.selected},t('src.delete'));else $('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
 function partMeta(p){if(Array.isArray(p.dims)&&p.dims.length===3&&p.filetype==='stl')return esc(t('parts.meta',{dims:p.dims.map(v=>fmt(v)).join(' × '),facets:Number(p.facets||0).toLocaleString(locale())}));return esc(t('parts.catalog_only',{type:(p.filetype||'model').toUpperCase()}))}
-function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=meshPart(p);return `<div class="part ${usable?'':p.open_in_orca?'ext':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}</div></div>${p.open_in_orca?`<button class="small" data-orca="${i}">${esc(t('btn.open_in_orca'))}</button>`:''}</div>`}).join('');
- document.querySelectorAll('[data-orca]').forEach(el=>el.onclick=e=>{e.stopPropagation();if(!S.busy)send('open_in_orca',{index:Number(el.dataset.orca)})});document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off):not(.ext)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})});updateActions()}
+function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=meshPart(p);return `<div class="part ${usable?'':p.open_in_orca?'ext':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}${p.turned!=null?` · <span class="tip">${esc(t('orient.turned',{pct:p.turned}))}</span>`:p.advice?` · <span class="tip">${esc(t('orient.advice',{pct:p.advice.pct}))}</span>`:''}</div></div>${p.advice&&usable?`<button class="small" data-turn="${i}" data-on="${p.turned==null?1:0}">${esc(t(p.turned==null?'btn.turn':'btn.unturn'))}</button>`:''}${p.open_in_orca?`<button class="small" data-orca="${i}">${esc(t('btn.open_in_orca'))}</button>`:''}</div>`}).join('');
+ document.querySelectorAll('[data-orca]').forEach(el=>el.onclick=e=>{e.stopPropagation();if(!S.busy)send('open_in_orca',{index:Number(el.dataset.orca)})});
+ document.querySelectorAll('[data-turn]').forEach(el=>el.onclick=e=>{e.stopPropagation();if(!S.busy)send('turn_part',{index:Number(el.dataset.turn),on:el.dataset.on==='1'})});
+ renderOrientBar();document.querySelectorAll('[data-check]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>{S.parts[Number(el.dataset.check)].included=el.checked;invalidatePlan();updateActions()}});document.querySelectorAll('.part:not(.off):not(.ext)').forEach(el=>el.onclick=()=>{S.previewIndex=Number(el.dataset.index);document.querySelectorAll('.part').forEach(x=>x.classList.toggle('on',x===el));send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})});updateActions()}
 function invalidatePlan(){if(S.plan){S.plan=null;renderPlan(null)}}
+// The orientation check runs part by part after a source opens; its advice shows in the rows.
+function renderOrientBar(){const n=S.parts.filter(p=>p.advice&&p.turned==null).length,checking=S.orient&&S.orient.done<S.orient.total;
+ $('orientBar').hidden=!checking&&!n;$('orientNote').textContent=checking?t('orient.checking',{done:S.orient.done,total:S.orient.total}):n?plural('orient.done',n):'';
+ $('turnAll').hidden=!n;$('turnAll').textContent=t('btn.turn_all',{n})}
+function startOrientCheck(){S.orientToken=(S.orientToken||0)+1;S.orient={done:0,total:S.parts.filter(meshPart).length};renderOrientBar();if(S.orient.total)send('orient_check',{index:0,token:S.orientToken})}
 
 /* 3D preview */
 function accentRgb(){const v=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();const m=/^#([0-9a-f]{6})$/i.exec(v);if(m){const n=parseInt(m[1],16);return [n>>16&255,n>>8&255,n&255]}const r=/rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(v);return r?[+r[1],+r[2],+r[3]]:[0,150,136]}
@@ -717,7 +741,7 @@ function openZoom(pi){const plates=S.plan&&S.plan.plates||[];if(!plates.length)r
  $('zoomList').innerHTML=p.items.map((it,ii)=>`<li><span class="no" style="color:${PALETTE[(S.zoom*3+ii)%PALETTE.length]}">${ii+1}</span><span class="nm">${esc(it.name)}</span><span class="dm">${esc(fmt(it.w)+' × '+fmt(it.h)+' '+t('unit.mm')+((it.angle||it.rotated)?t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360}):''))}</span></li>`).join('');
  $('zoomPrev').disabled=$('zoomNext').disabled=plates.length<2;$('zoom').hidden=false;$('zoomClose').focus()}
 function closeZoom(){$('zoom').hidden=true;S.zoom=null}
-function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('platesField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
+function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('platesField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('orientField').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
 
 /* wiring */
 $('openSettings').onclick=()=>openDrawer(true);$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
@@ -726,6 +750,7 @@ $('pickFolder').onclick=()=>{if(S.busy)return;S.scanning=true;status(t('st.openi
 $('addFolder').onclick=()=>{const path=$('folder').value.trim();if(path&&!S.busy){S.scanning=true;setBusy(true);send('request_folder_add',{path})}};$('folder').onkeydown=e=>{if(e.key==='Enter')$('addFolder').click()};
 const pickFiles=()=>{if(!S.busy){openDrawer(false);$('filePick').value='';$('filePick').click()}};$('addFiles').onclick=pickFiles;$('addFiles2').onclick=pickFiles;
 $('filePick').onchange=()=>{const files=Array.from($('filePick').files||[]);if(files.length)importFiles(files.map(f=>({file:f,top:'',rel:f.name})))};
+$('turnAll').onclick=()=>{if(!S.busy)send('turn_all')};$('orcaOrient').onchange=saveUiSettings;
 $('scan').onclick=requestScan;$('filter').oninput=renderArchives;$('rootFilter').onchange=()=>{S.root=$('rootFilter').value;renderArchives()};$('markSeen').onclick=()=>send('mark_seen');
 document.querySelectorAll('#kindChips .chip').forEach(b=>b.onclick=()=>{S.kind=b.dataset.kind;document.querySelectorAll('#kindChips .chip').forEach(x=>x.classList.toggle('on',x===b));renderArchives()});
 for(const id of ['checkOnOpen','recursive'])$(id).onchange=saveUiSettings;
@@ -783,7 +808,9 @@ orca.onMessage(msg=>{const k=msg.type;
  else if(k==='archives'){S.archives=msg.archives||[];S.folders=msg.folders||[];renderArchives();renderFolders();if(S.scanning){S.scanning=false;if(!S.importing)setBusy(false);const n=S.archives.filter(a=>a.new).length,sources=plural('folders.sources',S.archives.filter(a=>a.likely!==false).length);if(!S.archives.length&&!S.folders.length)status(t('st.choose_folder'));else status(n?t('st.scanned_new',{sources,n}):t('st.scanned',{sources}),'ok')}}
  else if(k==='folder_selected'){if(msg.path)$('folder').value=msg.path}
  else if(k==='folder_list'){S.config.folders=msg.folders||[];renderFolders();renderArchives()}
- else if(k==='archive'){S.selected=msg.path;S.selectedKind=msg.kind;S.selectedName=msg.name;S.selectedAdded=!!msg.added;S.parts=msg.parts||[];S.previewIndex=-1;S.mesh=null;if(!S.importing)setBusy(false);renderSourceHead();renderArchives();renderParts();renderPlan(null);drawEmptyView();status(msg.error||t('st.opened_source',{name:msg.name}),msg.error?'warn':'info')}
+ else if(k==='archive'){S.selected=msg.path;S.selectedKind=msg.kind;S.selectedName=msg.name;S.selectedAdded=!!msg.added;S.parts=msg.parts||[];S.previewIndex=-1;S.mesh=null;if(!S.importing)setBusy(false);renderSourceHead();renderArchives();renderParts();renderPlan(null);drawEmptyView();status(msg.error||t('st.opened_source',{name:msg.name}),msg.error?'warn':'info');startOrientCheck()}
+ else if(k==='orient_advice'){if(msg.index>=0&&S.parts[msg.index]){S.parts[msg.index].advice=msg.advice||null}S.orient={done:msg.done,total:msg.total};if(msg.next>=0){const token=S.orientToken;setTimeout(()=>{if(token===S.orientToken)send('orient_check',{index:msg.next})},20)}renderParts()}
+ else if(k==='parts_turned'){for(const c of msg.parts||[]){const p=S.parts[c.index];if(!p)continue;p.dims=c.dims;p.turned=c.turned?p.advice.pct:null}invalidatePlan();renderParts();if(S.previewIndex>=0&&(msg.parts||[]).some(c=>c.index===S.previewIndex))send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})}
  else if(k==='import_next'){if(S.importWait){const w=S.importWait;S.importWait=null;w.res(msg)}}
  else if(k==='preview'){drawMesh(msg)}
  else if(k==='plan'){setProfile(msg.profile);renderPlan(msg);status(t(msg.exportable?'st.plan_ready':'st.plan_problems'),msg.exportable?'ok':'warn')}
@@ -1795,6 +1822,118 @@ def _threemf_part_rows(name, member, items):
     return rows
 
 
+ORIENT_SAMPLE = 15000   # facets looked at per part; a uniform sample of bigger meshes is enough to compare
+ORIENT_OVERHANG = math.cos(math.radians(45))   # a face whose normal points further down than this needs support
+ORIENT_BED = 0.3   # mm above the lowest point that still counts as lying on the bed
+
+
+def _sample_triangles(raw, limit=ORIENT_SAMPLE):
+    """(triangles as 9-tuples, weight): every facet of a small mesh, or every n-th of a big one
+    with weight n, so sums of facet areas stay in mm²."""
+    if len(raw) >= 84:
+        count = struct.unpack_from("<I", raw, 80)[0]
+        if 0 < count <= 2_000_000 and 84 + count * 50 == len(raw):
+            step = max(1, count // limit)
+            return [struct.unpack_from("<9f", raw, 84 + i * 50 + 12) for i in range(0, count, step)], step
+    triangles = list(_iter_stl_triangles(raw))
+    step = max(1, len(triangles) // limit)
+    return triangles[::step], step
+
+
+def _rotation_to_down(d):
+    """The 3x3 rotation (rows) that turns direction d to (0, 0, -1): that side then lies on the bed."""
+    x, y, z = d
+    c = -z                      # d . (0, 0, -1)
+    if c > 1 - 1e-9:
+        return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    if c < -1 + 1e-9:           # upside down: half a turn about X
+        return ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))
+    vx, vy, vz = -y, x, 0.0     # d x (0, 0, -1)
+    k = 1.0 / (1.0 + c)
+    return ((1 - k * (vy * vy + vz * vz), -vz + k * vx * vy, vy + k * vx * vz),
+            (vz + k * vx * vy, 1 - k * (vx * vx + vz * vz), -vx + k * vy * vz),
+            (-vy + k * vx * vz, vx + k * vy * vz, 1 - k * (vx * vx + vy * vy)))
+
+
+def _orientation_advice(raw):
+    """Whether a part would print better lying another way, or None.
+
+    Like Orca's Auto orient, in short: the sides a part could lie on are the six axis sides and
+    its largest flat faces; for each, the area of faces that would hang over air steeper than
+    45° from level, and the area lying on the bed. A part is only flagged when it lies clearly
+    worse than it could (upside down, on a narrow edge): at least 40% and 2% of its surface less
+    overhang, so a part its designer laid out on purpose is left alone.
+    """
+    triangles, weight = _sample_triangles(raw)
+    faces = []
+    total = 0.0
+    for t in triangles:
+        ux, uy, uz = t[3] - t[0], t[4] - t[1], t[5] - t[2]
+        vx, vy, vz = t[6] - t[0], t[7] - t[1], t[8] - t[2]
+        nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        length = math.sqrt(nx * nx + ny * ny + nz * nz)
+        if length <= 1e-12:
+            continue
+        area = 0.5 * length * weight
+        total += area
+        faces.append((nx / length, ny / length, nz / length, area, t))
+    if not faces or total <= 0:
+        return None
+    candidates = [(0.0, 0.0, -1.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0)]
+    for nx, ny, nz, _area, _t in sorted(faces, key=lambda f: -f[3])[:40]:
+        if all(nx * a + ny * b + nz * c < 0.985 for a, b, c in candidates):
+            candidates.append((nx, ny, nz))
+        if len(candidates) >= 12:
+            break
+
+    def judge(d):
+        dx, dy, dz = d
+        low = min(-(dx * v[0] + dy * v[1] + dz * v[2]) for _, _, _, _, t in faces for v in (t[0:3], t[3:6], t[6:9]))
+        overhang = contact = 0.0
+        high = low
+        for nx, ny, nz, area, t in faces:
+            up = -(nx * dx + ny * dy + nz * dz)           # the face normal's height component once d is down
+            heights = (-(dx * t[0] + dy * t[1] + dz * t[2]), -(dx * t[3] + dy * t[4] + dz * t[5]), -(dx * t[6] + dy * t[7] + dz * t[8]))
+            top = max(heights)
+            high = max(high, top)
+            if top - low < ORIENT_BED:
+                if up < -0.95:
+                    contact += area
+            elif up < -ORIENT_OVERHANG:
+                overhang += area
+        # Too little to stand on is as bad as an overhang of the missing area.
+        return overhang + max(0.0, 0.03 * total - contact), overhang, high - low
+
+    scores = [judge(d) for d in candidates]
+    now = scores[0]
+    best = min(range(len(candidates)), key=lambda i: (scores[i][0], scores[i][2]))
+    cost, overhang, height = scores[best]
+    if best == 0 or now[0] <= 0 or cost > 0.6 * now[0] or now[1] - overhang < max(30.0, 0.02 * total):
+        return None
+    return {"down": [round(v, 6) for v in candidates[best]],
+            "pct": int(round(100 * (1 - overhang / now[1]))) if now[1] > 0 else 0,
+            "overhang_now": round(now[1], 1), "overhang_new": round(overhang, 1),
+            "height_now": round(now[2], 2), "height_new": round(height, 2)}
+
+
+def _turned_stl(raw, rows):
+    """A binary STL rotated by the 3x3 rotation `rows` (facet normals left for Orca to work out)."""
+    out = bytearray(84)
+    out[0:80] = b"PlatePilot turned".ljust(80)
+    count = 0
+    (a, b, c), (d, e, f), (g, h, i) = rows
+    pack = STL_RECORD.pack
+    pieces = []
+    for tri in _iter_stl_triangles(raw):
+        pieces.append(pack(0.0, 0.0, 0.0,
+                           a * tri[0] + b * tri[1] + c * tri[2], d * tri[0] + e * tri[1] + f * tri[2], g * tri[0] + h * tri[1] + i * tri[2],
+                           a * tri[3] + b * tri[4] + c * tri[5], d * tri[3] + e * tri[4] + f * tri[5], g * tri[3] + h * tri[4] + i * tri[5],
+                           a * tri[6] + b * tri[7] + c * tri[8], d * tri[6] + e * tri[7] + f * tri[8], g * tri[6] + h * tri[7] + i * tri[8], 0))
+        count += 1
+    struct.pack_into("<I", out, 80, count)
+    return bytes(out) + b"".join(pieces)
+
+
 def _footprint_hull(raw):
     """Convex hull of a part's outline seen from above, as (x, y) points (monotone chain).
     Points are rounded to 0.05 mm first, which keeps big meshes fast and changes nothing
@@ -2563,6 +2702,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         config["folders"] = folders
         config["check_on_open"] = bool(config.get("check_on_open", True))
         config["gpu_preview"] = bool(config.get("gpu_preview", True))
+        config["orca_orient"] = bool(config.get("orca_orient", False))
         if config.get("language") not in ("auto",) + LANGUAGES:
             config["language"] = "auto"
         return config
@@ -2827,6 +2967,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         self._selected_source = source
         self._selected_name = row["name"] if row is not None else os.path.basename(path)
         self._last_plan = None
+        self._open_parts = parts
+        self._advice, self._turns, self._turned = {}, {}, {}
         if row is not None and mark_seen:
             self._mark_seen([row])
         self.post_message({"type": "archive", "path": path, "kind": kind, "name": os.path.basename(path), "parts": parts,
@@ -2838,9 +2980,13 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         if not source:
             raise ValueError(_t("err.select_source"))
         path, kind, root, catalog = source
-        if kind == "zip":
-            return _read_archive(path, root)
-        return _read_loose_folder(path, root, catalog)
+        parts = _read_archive(path, root) if kind == "zip" else _read_loose_folder(path, root, catalog)
+        # A turned part has the size it has lying the new way.
+        for part in parts:
+            turned = getattr(self, "_turned", {}).get(part.get("member"))
+            if turned and part.get("member") in getattr(self, "_turns", {}):
+                part["dims"], part["turned"] = list(turned[1]), self._advice[part["member"]]["pct"]
+        return parts
 
     # Files dropped or pasted into the page arrive in chunks: import_start, then per file
     # import_begin and import_chunk until the file is complete, then import_finish.
@@ -3005,9 +3151,26 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         self._scan(config)
         self._notice(_t("msg.deleted"), "ok")
 
-    def _read_stl_blobs(self, source, parts, members):
+    def _read_stl_blobs(self, source, parts, members, turned=True):
         """The meshes of the selected parts as binary STL, read again from the current source with
-        the safety checks; a 3MF object comes out of its file (read and converted once)."""
+        the safety checks; a 3MF object comes out of its file (read and converted once), and a
+        turned part lies the way it was turned (unless turned=False)."""
+        blobs = self._read_raw_blobs(source, parts, members)
+        if turned:
+            for member in members:
+                if member in getattr(self, "_turns", {}):
+                    blobs[member] = self._turned_blob(member, blobs[member])
+        return blobs
+
+    def _turned_blob(self, member, raw):
+        cached = self._turned.get(member)
+        key = (len(raw), hashlib.blake2b(raw, digest_size=16).digest(), self._turns[member])
+        if not cached or cached[0] != key:
+            stl = _turned_stl(raw, self._turns[member])
+            cached = self._turned[member] = (key, _binary_stl_info(stl)["dims"], stl)
+        return cached[2]
+
+    def _read_raw_blobs(self, source, parts, members):
         by_member = {part.get("member"): part for part in parts if part.get("member")}
         blobs = {}
         if source[1] == "zip":
@@ -3047,6 +3210,49 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
         return blobs
 
+    def _orient_check(self, index):
+        """Check one part of the open source and say which comes next: the page asks part by part,
+        so Orca stays responsive while a big source is checked."""
+        parts = getattr(self, "_open_parts", [])
+        source = getattr(self, "_selected_source", None)
+        usable = [i for i, part in enumerate(parts) if part.get("filetype") in ("stl", "3mf") and part.get("member") and not part.get("blocked")]
+        later = [i for i in usable if i >= index]
+        if not later or not source:
+            self.post_message({"type": "orient_advice", "index": -1, "next": -1, "done": len(usable), "total": len(usable),
+                               "advised": len(self._advice)})
+            return
+        i = later[0]
+        member = parts[i]["member"]
+        try:
+            raw = self._read_stl_blobs(source, parts, [member], turned=False)[member]
+            advice = _orientation_advice(raw)
+        except Exception:
+            advice = None
+        if advice:
+            self._advice[member] = advice
+        following = [j for j in usable if j > i]
+        self.post_message({"type": "orient_advice", "index": i, "advice": advice, "next": following[0] if following else -1,
+                           "done": usable.index(i) + 1, "total": len(usable), "advised": len(self._advice)})
+
+    def _turn_parts(self, indexes, on):
+        """Turn the parts the check found lying worse (or put them back); their new sizes go to the page."""
+        parts = getattr(self, "_open_parts", [])
+        source = getattr(self, "_selected_source", None)
+        changed = []
+        for i in indexes:
+            if i < 0 or i >= len(parts) or parts[i].get("member") not in self._advice:
+                continue
+            member = parts[i]["member"]
+            if on:
+                self._turns[member] = _rotation_to_down(self._advice[member]["down"])
+                self._read_stl_blobs(source, parts, [member])    # turns it now, so the size is known
+                changed.append({"index": i, "turned": True, "dims": list(self._turned[member][1])})
+            else:
+                self._turns.pop(member, None)
+                changed.append({"index": i, "turned": False, "dims": parts[i]["dims"]})
+        self._last_plan = None
+        self.post_message({"type": "parts_turned", "parts": changed})
+
     def _open_step_in_orca(self, config, index):
         """Hand a STEP part to this Orca window, which reads STEP itself and asks how finely to
         convert it. One inside an archive is taken out into PlatePilot's folder first."""
@@ -3081,7 +3287,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             raise ValueError(_t("err.select_source"))
         included = set(str(value) for value in included)
         all_parts = self._current_parts(config)
-        parts = [part for part in all_parts if part.get("filetype") == "stl" and part.get("member") in included]
+        parts = [part for part in all_parts if part.get("filetype") in ("stl", "3mf") and part.get("member") in included]
         if not parts:
             raise ValueError(_t("err.select_stl"))
         if len(parts) > MAX_NATIVE_PARTS:
@@ -3108,6 +3314,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             output = os.path.join(run_dir, "PlatePilot-AutoArrange.3mf")
             log_path = os.path.join(run_dir, "orca-cli.log")
             command = [executable, "--load-settings", ";".join(settings), "--arrange", "1"]
+            if config.get("orca_orient"):
+                command += ["--orient", "1"]   # Orca's own Auto orient, before it arranges
             # Orca arranges without turning parts unless told to; with it, it also tries 45°
             # and 135°, which is the only way a part longer than the bed side fits.
             bed_x, bed_y = float(profile["size"]["x"]), float(profile["size"]["y"])
@@ -3184,7 +3392,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                                    "scan_interrupted": bool(marker) and os.path.exists(marker)})
             elif kind == "save_settings":
                 incoming = data.get("config", {})
-                for key in ("check_on_open", "recursive", "gpu_preview"):
+                for key in ("check_on_open", "recursive", "gpu_preview", "orca_orient"):
                     config[key] = bool(incoming.get(key, config.get(key)))
                 config["margin_mm"] = max(0.0, min(20.0, float(incoming.get("margin_mm", config.get("margin_mm", DEFAULT_MARGIN_MM)))))
                 config["arrange_mode"] = "orca" if incoming.get("arrange_mode") == "orca" else "own"
@@ -3267,6 +3475,14 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 self._import_finish(config)
             elif kind == "import_cancel":
                 self._import_abort()
+            elif kind == "orient_check":
+                self._orient_check(int(data.get("index", 0)))
+            elif kind == "turn_part":
+                self._turn_parts([int(data.get("index", -1))], bool(data.get("on", True)))
+            elif kind == "turn_all":
+                parts = getattr(self, "_open_parts", [])
+                self._turn_parts([i for i, part in enumerate(parts) if part.get("member") in self._advice
+                                  and part.get("member") not in self._turns], True)
             elif kind == "open_in_orca":
                 self._open_step_in_orca(config, int(data.get("index", -1)))
             elif kind == "preview_part":

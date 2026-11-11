@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- **Parts lying the wrong way are pointed out.** When a source opens, PlatePilot checks how each STL and 3MF part lies: for the sides it could lie on (the six axis sides and its largest flat faces) it compares the area that would hang over air steeper than 45° and the area that would touch the bed. A part that lies clearly worse than it could, upside down or on a narrow edge, gets a note in the list ("lies better turned: 85% less overhang") and a **Turn** button. **Turn all suggested** turns them in one go, **Undo turn** puts a part back. Nothing is turned by itself, and a part is flagged only when the gain is large, so a part its designer laid out on purpose is left alone. A turned part is turned everywhere: in the preview, in both PlatePilot layouts (with its new footprint), in the project and in Orca auto-arrange. The check runs part by part and does not hold up the page; big meshes are sampled.
+- **Orca auto-arrange: "Turn parts (Orca auto-orient)".** A checkbox next to **Arrange in Orca**, off by default. With it Orca turns every part the way its Auto orient button would before it arranges them (`--orient 1`).
+- **Fixed:** 3MF parts were left out of Orca auto-arrange.
+
 ## 0.7.1
 
 - **Projects are named after their source:** "Dragon set - PlatePilot.3mf" instead of "PlatePilot-20261103-153137.3mf", in both arrange modes, so Orca's title bar and recent projects show what was laid out. The same source keeps one file: a later layout of it replaces the file PlatePilot wrote last, so Orca's recent list does not fill up with copies. Once the project was changed and saved in Orca, PlatePilot leaves it alone and writes "... (2)". Projects are kept in a projects folder in PlatePilot's data folder.

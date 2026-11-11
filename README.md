@@ -13,6 +13,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 - **A tidy list.** Archives that were never opened are judged by their names. Model downloads are listed up front; programs, drivers and archives with unclear names wait in a collapsed group at the bottom, and search still finds them.
 - **STL and 3MF parts** are previewed, laid out and sent to Prepare; each object of a 3MF is a part. **STEP parts** open in Orca with one button: Orca converts them itself.
 - **Parts longer than the bed side** are turned diagonally when that makes them fit, in both arrange modes.
+- **Parts lying the wrong way.** Downloaded parts sometimes lie upside down or on a narrow edge, which means more supports. PlatePilot checks every part of a source and marks the ones that would print with clearly less overhang on another side. **Turn** lays such a part down properly, **Turn all suggested** does it for all of them; nothing is turned without you. In Orca auto-arrange you can instead let Orca's own Auto orient turn every part.
 - **3D preview on your bed.** A shaded preview of any STL on the bed of the printer selected in Orca, drawn with the graphics card (WebGL): parts of up to 250 000 facets are shown in full and turn smoothly. Without WebGL, or with it turned off in the settings, a simpler 2D preview of up to 30 000 facets is used.
 - **Two ways to arrange:**
   - **PlatePilot layout:** packs parts by their footprint (MaxRects, six orderings, 90° rotation) with an even gap, and shows each plate with its fill percentage before you send it.
@@ -50,8 +51,9 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 3. Pick an archive or folder, and click a part to preview it.
 4. Tick the parts you want and pick a mode:
    - **PlatePilot layout:** set the gap, click **Calculate**, check the plates, then click **Open in Prepare**.
-   - **Orca auto-arrange:** click **Arrange in Orca**.
-5. If Prepare already has models, Orca asks what to do with the file. Choose **Open as project** to keep the plates. **Import geometry** adds the parts to your current project without the plates.
+   - **Orca auto-arrange:** click **Arrange in Orca**. Tick **Turn parts (Orca auto-orient)** to let Orca lay every part down first.
+5. A part marked "lies better turned" lies upside down or on an edge: click **Turn** next to it, or **Turn all suggested** above the list. **Undo turn** puts it back.
+6. If Prepare already has models, Orca asks what to do with the file. Choose **Open as project** to keep the plates. **Import geometry** adds the parts to your current project without the plates.
 
 Slice again before printing, and check Orca's warnings for parts outside a plate.
 
@@ -65,7 +67,7 @@ PlatePilot works only with local files. It does not use the network.
   - When you open a model folder, PlatePilot copies its STL files into its data folder in one step. Orca asks once per folder (it calls this "read/write": PlatePilot reads your folder and writes the copy).
   - Files you drop or paste into PlatePilot are copied into its data folder, which needs no permission. **Delete** removes only that copy.
 - It writes projects only to its own plugin data folder.
-- **Orca auto-arrange** starts Orca's command-line mode (`orca-slicer --arrange 1 --export-3mf`). Orca asks for permission before it runs.
+- **Orca auto-arrange** starts Orca's command-line mode (`orca-slicer --arrange 1 --export-3mf`, with `--orient 1` when you ask for auto-orient). Orca asks for permission before it runs.
 
 ## How it works
 
@@ -103,6 +105,7 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 - **Аккуратный список.** Архивы, которые ещё не открывались, оцениваются по названию. Загрузки моделей идут в начале списка, а программы, драйверы и архивы с непонятными названиями свёрнуты в группу внизу; поиск находит и их.
 - **Детали STL и 3MF** показываются, раскладываются и отправляются в «Подготовку»; каждый объект 3MF — отдельная деталь. **STEP** открывается в Orca одной кнопкой: Orca преобразует его сама.
 - **Детали длиннее стороны стола** поворачиваются по диагонали, если так они помещаются, в обоих режимах раскладки.
+- **Детали, которые лежат неудачно.** Скачанные детали иногда лежат вверх ногами или на узком ребре, а это лишние поддержки. PlatePilot проверяет каждую деталь источника и отмечает те, у которых на другой стороне заметно меньше нависаний. **«Повернуть»** кладёт такую деталь правильно, **«Повернуть все предложенные»** — сразу все; без вас ничего не поворачивается. В режиме авторасстановки Orca можно вместо этого включить её собственный автоповорот для всех деталей.
 - **3D-просмотр на вашем столе.** Затенённый предпросмотр любой STL на столе принтера, выбранного в Orca.
 - **Два способа раскладки:**
   - **Раскладка PlatePilot:** укладывает детали по габаритам (MaxRects, шесть порядков, поворот на 90°) с равным зазором и показывает каждый стол с процентом заполнения.
@@ -131,8 +134,9 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 3. Выберите архив или папку, щёлкните деталь для предпросмотра.
 4. Отметьте нужные детали и выберите режим:
    - **Раскладка PlatePilot:** задайте зазор, нажмите **«Рассчитать»**, проверьте столы и нажмите **«В «Подготовку»»**.
-   - **Авторасстановка Orca:** нажмите **«Расставить в Orca»**.
-5. Если в «Подготовке» уже есть модели, Orca спросит, что сделать с файлом. Выберите **«Открыть как проект»**, чтобы сохранить столы. **«Импорт геометрии»** добавит детали в текущий проект без столов.
+   - **Авторасстановка Orca:** нажмите **«Расставить в Orca»**. Отметьте **«Поворачивать детали (автоповорот Orca)»**, чтобы Orca сначала уложила каждую деталь.
+5. Деталь с пометкой «лучше повернуть» лежит вверх ногами или на ребре: нажмите **«Повернуть»** рядом с ней или **«Повернуть все предложенные»** над списком. **«Вернуть»** кладёт её как было.
+6. Если в «Подготовке» уже есть модели, Orca спросит, что сделать с файлом. Выберите **«Открыть как проект»**, чтобы сохранить столы. **«Импорт геометрии»** добавит детали в текущий проект без столов.
 
 Перед печатью нарежьте проект заново и проверьте предупреждения Orca о деталях за границами стола.
 
