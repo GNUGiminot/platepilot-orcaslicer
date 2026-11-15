@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- **Eight more languages:** Deutsch, Français, Español, Português (Brasil), Italiano, Türkçe, 日本語 and 简体中文, beside English and Russian. "Same as Orca" picks the one Orca uses; Settings → Language picks any. Orca's own tabs and buttons ("Prepare", "Open as project"…) are named as Orca names them in each language, and plurals follow each language's rules.
+- **The Folders button is now Settings**, as it holds more than folders.
+- **Themes.** Settings → **Theme**: Same as Orca (as before), or one of seven palettes. Light and warm: **Parchment** (beige with copper, the palette of the author's DeskArchive), **Terracotta** (clay and brick). Light and cool: **Sage** (soft green), **Blueprint** (pale blue), **Dusk** (dusty lavender). Dark: **Workshop** (warm brown with amber) and **Night shift** (deep blue with teal). A dark theme is dark whatever Orca's theme is, and the 3D preview follows the theme's colours. The choice is saved with the other settings.
+
 ## 0.9.1
 
 - **The plates in 3D are easy to find.** After Calculate the first plate shows in 3D in the preview by itself when it is light enough to come whole (up to 250 000 facets in all, about 0.1 s a part). The preview gets **‹ Plate 1 of N in 3D ›** to step through the plates; the layout's summary has **Plates in 3D**; every plate and the plate close-up have an accent **3D** button with a cube instead of a plain word.

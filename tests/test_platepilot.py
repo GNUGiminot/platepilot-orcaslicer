@@ -87,6 +87,63 @@ class Translations(unittest.TestCase):
             pp._set_language("en")
 
 
+class MoreLanguages(unittest.TestCase):
+    """Eight languages beside English and Russian: complete, with the same placeholders, chosen from Orca's code."""
+
+    def test_every_language_has_every_string_with_the_same_placeholders(self):
+        self.assertEqual(sorted(pp.EXTRA_STRINGS), sorted(set(pp.LANGUAGES) - set(pp.TABLE_LANGUAGES)))
+        one_form = {"tr", "ja", "zh_CN"}
+        for lang, table in pp.EXTRA_STRINGS.items():
+            self.assertEqual(sorted(table), sorted(pp.STRINGS), lang)
+            for key, (en, _ru) in pp.STRINGS.items():
+                with self.subTest(lang=lang, key=key):
+                    text = table[key]
+                    self.assertTrue(text.strip())
+                    self.assertEqual(set(re.findall(r"\{(\w+)\}", en)), set(re.findall(r"\{(\w+)\}", text)))
+                    if "|" in en:
+                        self.assertEqual(len(text.split("|")), 1 if lang in one_form else 2)
+                    else:
+                        self.assertNotIn("|", text)
+
+    def test_orca_language_codes(self):
+        for code, lang in (("de_DE", "de"), ("fr_FR", "fr"), ("es_ES", "es"), ("pt_BR", "pt_BR"), ("pt-PT", "pt_BR"),
+                           ("it_IT", "it"), ("tr_TR", "tr"), ("ja_JP", "ja"), ("zh_CN", "zh_CN"), ("zh_TW", "zh_CN"),
+                           ("ru_RU", "ru"), ("en_GB", "en"), ("ko_KR", "en"), ("", "en")):
+            self.assertEqual(pp._orca_language(code), lang, code)
+
+    def test_plurals_and_fallback(self):
+        try:
+            pp._set_language("fr")
+            self.assertEqual([pp._plural("plan.plates", n) for n in (0, 1, 2)], ["0 plaque", "1 plaque", "2 plaques"])
+            pp._set_language("de")
+            self.assertEqual([pp._plural("plan.parts", n) for n in (1, 3)], ["1 Teil", "3 Teile"])
+            pp._set_language("ja")
+            self.assertEqual(pp._plural("plan.parts", 3), "3 個のパーツ")
+            self.assertEqual(pp._t("plan.plate", n=2), "プレート 2")
+            saved = pp.EXTRA_STRINGS["ja"].pop("plan.plate")
+            try:
+                self.assertEqual(pp._t("plan.plate", n=2), "Plate 2")          # a missing key shows in English
+            finally:
+                pp.EXTRA_STRINGS["ja"]["plan.plate"] = saved
+            self.assertEqual(pp._ui_strings()["btn.plan"], "計算")
+        finally:
+            pp._set_language("en")
+
+    def test_a_broken_3mf_says_why_in_the_chosen_language(self):
+        raw = threemf("<resources>" + box_model(10, 10, 10) + '</resources><build><item objectid="1" transform="1 0 0"/></build>')
+        try:
+            pp._set_language("de")
+            with self.assertRaises(ValueError) as caught:
+                pp._threemf_parts(raw)
+            self.assertEqual(str(caught.exception), "die Lage eines Objekts in der Datei ist beschädigt")
+        finally:
+            pp._set_language("en")
+
+    def test_the_settings_list_every_language(self):
+        for lang in pp.LANGUAGES:
+            self.assertIn(f'<option value="{lang}">', pp.PAGE)
+
+
 class FolderInput(unittest.TestCase):
     def test_quotes_from_copy_as_path_are_removed(self):
         folder = tempfile.gettempdir()
@@ -1007,6 +1064,25 @@ class Orientation(unittest.TestCase):
                 self.assertLess(commands[1].index("--arrange"), at)
         finally:
             pp._get_profile, pp._project_settings, pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen = saved
+
+
+class Themes(unittest.TestCase):
+    def test_a_theme_is_saved_and_an_unknown_one_falls_back(self):
+        with tempfile.TemporaryDirectory() as storage:
+            page = FakePage(storage)
+            page.send({"type": "save_settings", "config": {"theme": "parchment"}})
+            self.assertEqual(json.loads(page.config_text)["theme"], "parchment")
+            page.send({"type": "save_settings", "config": {"theme": "neon"}})
+            self.assertEqual(json.loads(page.config_text)["theme"], "orca")
+            page.config_text = json.dumps({"theme": 5})
+            self.assertEqual(page._config()["theme"], "orca")
+
+    def test_every_theme_has_colours_a_name_and_an_option(self):
+        for theme in pp.THEMES[1:]:
+            self.assertIn(f"html[data-pp-theme={theme}]{{", pp.PAGE)
+            self.assertIn(f'<option value="{theme}" data-i18n="theme.{theme}">', pp.PAGE)
+            self.assertIn(f"theme.{theme}", pp.STRINGS)
+        self.assertNotIn("honey", pp.THEMES)
 
 
 class Basket(unittest.TestCase):

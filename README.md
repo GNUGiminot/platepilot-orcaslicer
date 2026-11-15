@@ -23,7 +23,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
   - Click a plate to see it up close, with every part numbered and listed with its size. **3D** shows the plate in the 3D preview, parts turned and placed as in the project; after Calculate the first plate shows there by itself, and **‹ Plate 1 of N ›** steps through the rest.
   - **Orca auto-arrange:** hands the parts to Orca's own arrange, which uses the real part outlines and your active printer and process profiles.
 - **One click to Prepare.** The project opens in the window you already have: one object per part, each on its own plate, with your current printer, process and filament profiles.
-- **English and Russian UI.** Follows Orca's language, or pick one in the settings. Light and dark themes follow Orca.
+- **Ten languages:** English, Russian, German, French, Spanish, Portuguese (Brazil), Italian, Turkish, Japanese and Simplified Chinese. Follows Orca's language, or pick one in the settings. Light and dark follow Orca, or pick one of seven themes in the settings: Parchment, Terracotta, Sage, Blueprint, Dusk, Workshop (dark), Night shift (dark).
 
 ![Russian UI, dark theme, Orca auto-arrange mode](docs/screenshot-dark-ru.png)
 
@@ -47,7 +47,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 
 ## Use
 
-1. Open the **PlatePilot** tab and drop a ZIP or STL files onto it. Or click **Folders** and add a folder to watch: click **Choose folder…** or paste a folder path. Paths in quotes, as Windows Explorer's "Copy as path" makes them, are fine.
+1. Open the **PlatePilot** tab and drop a ZIP or STL files onto it. Or click **Settings** and add a folder to watch: click **Choose folder…** or paste a folder path. Paths in quotes, as Windows Explorer's "Copy as path" makes them, are fine.
 2. The folders are checked when PlatePilot opens and when you come back to the tab. **Refresh** checks them right away. Nothing runs in the background.
 3. Pick an archive or folder, and click a part to preview it.
 4. Tick the parts you want and pick a mode:
@@ -86,7 +86,7 @@ python -m unittest discover -s tests   # tests (no OrcaSlicer needed)
 python build_wheel.py                  # writes dist/*.whl
 ```
 
-The plugin is the single file `platepilot.py`. Every user-facing string lives in its `STRINGS` table in English and Russian. To add a language, add a column to the table and a code to `LANGUAGES`.
+The plugin is the single file `platepilot.py`. Every user-facing string lives in its `STRINGS` table in English and Russian, and in `EXTRA_STRINGS` for the other languages. To add a language, add its table to `EXTRA_STRINGS` and its code to `LANGUAGES`; the tests check that it has every key with the same placeholders.
 
 Publishing a GitHub release builds the wheel and uploads it to Orca Cloud through `.github/workflows/publish-orcacloud.yml`. The upload runs only after the repository is connected to the plugin in Orca Cloud and the repository variable `ORCACLOUD_PUBLISH` is set to `true`.
 
@@ -117,7 +117,7 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
   - По щелчку на стол он открывается крупно: каждая деталь с номером, рядом список с размерами. Кнопка **«3D»** показывает стол в 3D-просмотре: детали повёрнуты и расставлены, как в проекте; после расчёта первый стол появляется там сам, а **«‹ Стол 1 из N ›»** листает остальные.
   - **Авторасстановка Orca:** передаёт детали встроенной авторасстановке Orca, которая учитывает настоящие контуры деталей и ваши активные профили принтера и процесса.
 - **Один клик до «Подготовки».** Проект открывается в уже открытом окне Orca: каждая деталь отдельным объектом на своём столе, с текущими профилями принтера, процесса и материала.
-- **Интерфейс на русском и английском.** Язык берётся из Orca или выбирается в настройках. Светлая и тёмная тема — как в Orca.
+- **Десять языков:** русский, английский, немецкий, французский, испанский, португальский (Бразилия), итальянский, турецкий, японский и упрощённый китайский. Язык берётся из Orca или выбирается в настройках. Светлая и тёмная тема — как в Orca, или одна из семи тем в настройках: Пергамент, Терракота, Шалфей, Чертёж, Сумерки, Мастерская (тёмная), Ночная смена (тёмная).
 
 ## Требования
 
@@ -132,7 +132,7 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Как пользоваться
 
-1. Откройте вкладку **PlatePilot** и перетащите на неё ZIP или STL. Либо нажмите **«Папки»** и добавьте папку для отслеживания: **«Выбрать папку…»** или вставьте путь. Путь в кавычках, как из «Копировать как путь» в Проводнике, тоже подойдёт.
+1. Откройте вкладку **PlatePilot** и перетащите на неё ZIP или STL. Либо нажмите **«Настройки»** и добавьте папку для отслеживания: **«Выбрать папку…»** или вставьте путь. Путь в кавычках, как из «Копировать как путь» в Проводнике, тоже подойдёт.
 2. Папки проверяются при открытии PlatePilot и при возврате на вкладку, **«Обновить»** проверяет их сразу. В фоне ничего не работает.
 3. Выберите архив или папку, щёлкните деталь для предпросмотра.
 4. Отметьте нужные детали и выберите режим:
