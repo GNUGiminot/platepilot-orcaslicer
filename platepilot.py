@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.8.0"
+# version = "0.9.0"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -28,7 +28,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -218,6 +218,26 @@ STRINGS = {
     "plan.zones": ("check excluded areas in Orca", "проверьте исключённые зоны в Orca"),
     "plan.smart": ("smart layout β", "умная раскладка β"),
     "plan.plate": ("Plate {n}", "Стол {n}"),
+    "plan.view3d": ("3D", "3D"),
+    "plan.view3d_tip": ("See this plate in 3D in the preview", "Показать этот стол в 3D в окне просмотра"),
+    "view.plate_meta": ("{parts} · bed {bed} · simplified", "{parts} · стол {bed} · упрощённо"),
+    "st.plate_shown": ("{name} in 3D: drag to turn it.", "{name} в 3D: потяните, чтобы повернуть."),
+    "basket.add": ("To basket", "В корзину"),
+    "basket.add_tip": ("Put the ticked parts in the basket, where parts from several sources are laid out together",
+                       "Положить отмеченные детали в корзину: в ней детали из разных источников раскладываются вместе"),
+    "basket.show": ("Basket · {n}", "Корзина · {n}"),
+    "basket.back": ("Back to the source", "К деталям источника"),
+    "basket.empty": ("The basket is empty. Tick parts in any source and press To basket; parts from several sources are laid out together here.",
+                     "Корзина пуста. Отметьте детали в любом источнике и нажмите «В корзину»: здесь детали из разных источников раскладываются вместе."),
+    "basket.from": ("from {name}", "из «{name}»"),
+    "basket.copies": ("Copies of this part", "Сколько копий этой детали"),
+    "basket.remove": ("Take out of the basket", "Убрать из корзины"),
+    "basket.clear": ("Empty the basket", "Очистить корзину"),
+    "basket.added": ("In the basket: {n}", "В корзине: {n}"),
+    "basket.title": ("Basket", "Корзина"),
+    "basket.and_more": ("{name} and {n} more", "{name} и ещё {n}"),
+    "err.basket_empty": ("the basket is empty", "корзина пуста"),
+    "basket.turned": ("turned", "повёрнута"),
     "plan.plate_meta": ("{parts} · {fill}%", "{parts} · {fill}%"),
     "plan.rotated": (" · rotated {n}°", " · повёрнута на {n}°"),
     "plan.zoom_hint": ("Click a plate to see it up close", "Нажмите на стол, чтобы рассмотреть его крупно"),
@@ -438,6 +458,9 @@ input[type=number]{width:76px}
 .part{display:flex;gap:10px;align-items:center;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer}.part:hover{background:var(--surface-2)}.part.on{background:var(--accent-soft)}
 .part.off{cursor:default;opacity:.62}
 .part.ext{cursor:default}.part.ext .t{opacity:.62}
+.basket-item .copies{display:flex;align-items:center;gap:3px;font-size:11.5px;color:var(--muted)}.basket-item .copies input{width:48px}
+.basket-foot{display:flex;justify-content:flex-end;padding:6px 4px 2px}
+.plate-head .view3d{margin-left:auto;padding:1px 8px;font-size:11px}
 .orient-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 12px 8px;font-size:12px;color:var(--muted)}.orient-bar span{flex:1 1 200px}
 .part .tip{color:var(--accent)}
 button.small{height:26px;padding:0 10px;font-size:12px;flex:none}.part .t{min-width:0;flex:1}.part .n{overflow-wrap:anywhere;line-height:1.3}.part .m{color:var(--muted);font-size:11.5px;margin-top:2px}
@@ -539,9 +562,10 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
   <div id="sourceHead" class="card source-head"></div>
   <div class="split">
    <div class="card parts">
-    <div class="card-head"><h2 data-i18n="parts.title">Parts</h2><span id="partCount" class="count">0</span><span class="spacer"></span><button id="all" class="ghost" data-i18n="parts.all">All</button><button id="none" class="ghost" data-i18n="parts.none">None</button></div>
+    <div class="card-head"><h2 id="partsTitle" data-i18n="parts.title">Parts</h2><span id="partCount" class="count">0</span><span class="spacer"></span><button id="toBasket" class="small" data-i18n="basket.add" data-i18n-title="basket.add_tip" title="Put the ticked parts in the basket">To basket</button><button id="basketTab" class="ghost" hidden></button><button id="all" class="ghost" data-i18n="parts.all">All</button><button id="none" class="ghost" data-i18n="parts.none">None</button></div>
     <div id="orientBar" class="orient-bar" hidden><span id="orientNote"></span><button id="turnAll" class="small" data-i18n-title="btn.turn_all_tip" title="Turn every suggested part"></button></div>
     <div id="parts" class="part-list"></div>
+    <div id="basketList" class="part-list" hidden></div>
    </div>
    <div class="card viewer">
     <canvas id="view"></canvas><canvas id="viewGl" aria-hidden="true"></canvas>
@@ -605,7 +629,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 
 <script>
 const $=id=>document.getElementById(id);
-const S={archives:[],folders:[],selected:null,selectedKind:null,selectedName:'',selectedAdded:false,parts:[],profile:null,config:{},mesh:null,drag:null,busy:false,scanning:false,importing:false,importWait:null,replyTimer:null,lastScan:0,showOther:false,pending:null,nativeTick:null,mode:'own',kind:'all',plan:null,previewIndex:-1,strings:{},lang:'en',platform:'windows'};
+const S={view:'source',basket:{items:[],total:0},previewMember:null,plateView:null,archives:[],folders:[],selected:null,selectedKind:null,selectedName:'',selectedAdded:false,parts:[],profile:null,config:{},mesh:null,drag:null,busy:false,scanning:false,importing:false,importWait:null,replyTimer:null,lastScan:0,showOther:false,pending:null,nativeTick:null,mode:'own',kind:'all',plan:null,previewIndex:-1,strings:{},lang:'en',platform:'windows'};
 const IMPORT_RE=/\.(zip|stl|step|stp|3mf)$/i,CHUNK=1536*1024;
 const PALETTE=['#14b8a6','#6366f1','#f59e0b','#ec4899','#0ea5e9','#84cc16','#a855f7','#f97316'];
 const icon=n=>`<svg class="ic"><use href="#i-${n}"/></svg>`;
@@ -622,7 +646,17 @@ function setBusy(b){S.busy=b;document.body.classList.toggle('busy',b);$('scan').
 function noAnswer(){if(!S.busy||S.importing||S.nativeTick)return;S.scanning=false;setBusy(false);status(t('st.no_answer'),'error')}
 function meshPart(p){return (p.filetype==='stl'||p.filetype==='3mf')&&p.member&&!p.blocked}
 function selectedStl(){return S.parts.filter(p=>p.included&&meshPart(p))}
-function updateActions(){const n=selectedStl().length;$('plan').disabled=S.busy||!n;$('planSmart').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('partCount').textContent=S.parts.length?`${n} / ${S.parts.length}`:'0'}
+function inBasket(){return S.view==='basket'}
+function renderBasket(){const b=S.basket,on=inBasket();$('partsTitle').textContent=on?t('basket.title'):t('parts.title');$('basketTab').hidden=!on&&!b.items.length;$('basketTab').textContent=on?t('basket.back'):t('basket.show',{n:b.total});$('basketTab').classList.toggle('on',on);
+ $('parts').hidden=on;$('basketList').hidden=!on;$('all').hidden=on;$('none').hidden=on;$('toBasket').hidden=on;if(on)$('orientBar').hidden=true;else renderOrientBar();
+ if(on){$('basketList').innerHTML=b.items.length?b.items.map(e=>`<div class="part basket-item ${S.previewMember==='basket:'+e.id+':1'?'on':''}" data-bid="${e.id}"><div class="t"><div class="n">${esc(e.name)}</div><div class="m">${esc(t('basket.from',{name:e.source_name}))} · ${esc(e.dims.map(v=>fmt(v)).join(' × '))} ${esc(t('unit.mm'))}${e.turned?` · <span class="tip">${esc(t('basket.turned'))}</span>`:''}</div></div><label class="copies" title="${esc(t('basket.copies'))}">×<input type="number" min="1" max="50" step="1" value="${e.copies}" data-copies="${e.id}"></label><button class="small" data-unbasket="${e.id}" title="${esc(t('basket.remove'))}">✕</button></div>`).join('')+`<div class="basket-foot"><button id="basketClear" class="ghost">${esc(t('basket.clear'))}</button></div>`:`<div class="empty">${icon('cube')}<div>${esc(t('basket.empty'))}</div></div>`;
+  document.querySelectorAll('[data-copies]').forEach(el=>{el.onclick=e=>e.stopPropagation();el.onchange=()=>send('basket_set',{id:Number(el.dataset.copies),copies:Math.max(1,Math.min(50,Number(el.value)||1))})});
+  document.querySelectorAll('[data-unbasket]').forEach(el=>el.onclick=e=>{e.stopPropagation();send('basket_remove',{id:Number(el.dataset.unbasket)})});
+  document.querySelectorAll('.basket-item').forEach(el=>el.onclick=()=>{S.previewMember='basket:'+el.dataset.bid+':1';S.previewIndex=-1;renderBasket();send('preview_part',{member:S.previewMember,max_facets:previewBudget()})});
+  if($('basketClear'))$('basketClear').onclick=()=>send('basket_clear')}
+ updateActions()}
+function setView(view){if(S.view===view)return;S.view=view;invalidatePlan();renderBasket()}
+function updateActions(){const n=inBasket()?S.basket.total:selectedStl().length;$('plan').disabled=S.busy||!n;$('planSmart').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('toBasket').disabled=S.busy||!selectedStl().length;$('partCount').textContent=inBasket()?String(n):S.parts.length?`${n} / ${S.parts.length}`:'0'}
 function scheduleNativeTick(){if(S.nativeTick)return;S.nativeTick=setTimeout(()=>{S.nativeTick=null;send('native_arrange_tick')},700)}
 function stopNativeTicks(){if(S.nativeTick)clearTimeout(S.nativeTick);S.nativeTick=null}
 function requestScan(){if(S.busy)return;S.scanning=true;S.lastScan=Date.now();setBusy(true);status(t('st.scanning'));send('scan')}
@@ -667,7 +701,7 @@ function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class=
 function invalidatePlan(){if(S.plan){S.plan=null;renderPlan(null)}}
 // The orientation check runs part by part after a source opens; its advice shows in the rows.
 function renderOrientBar(){const n=S.parts.filter(p=>p.advice&&p.turned==null).length,checking=S.orient&&S.orient.done<S.orient.total;
- $('orientBar').hidden=!checking&&!n;$('orientNote').textContent=checking?t('orient.checking',{done:S.orient.done,total:S.orient.total}):n?plural('orient.done',n):'';
+ $('orientBar').hidden=inBasket()||(!checking&&!n);$('orientNote').textContent=checking?t('orient.checking',{done:S.orient.done,total:S.orient.total}):n?plural('orient.done',n):'';
  $('turnAll').hidden=!n;$('turnAll').textContent=t('btn.turn_all',{n})}
 function startOrientCheck(){S.orientToken=(S.orientToken||0)+1;S.orient={done:0,total:S.parts.filter(meshPart).length};renderOrientBar();if(S.orient.total)send('orient_check',{index:0,token:S.orientToken})}
 
@@ -701,9 +735,9 @@ function glDraw(m,v){// While the browser restores a lost context, draw nothing 
  catch(e){console.warn('PlatePilot: the WebGL preview failed, drawing in 2D',e);GL.failed=true;glClear();
  // A full preview is too heavy for the 2D canvas: ask for the simplified one.
  if(m.f.length/9>30000&&S.previewIndex>=0)setTimeout(()=>send('preview_part',{index:S.previewIndex,max_facets:previewBudget()}),0);return false}}
-function drawMesh(data){if(!data||!data.vertices){S.mesh=null;drawEmptyView();return}const bin=atob(data.vertices),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const f=new Float32Array(arr.buffer,0,arr.length>>2);let lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];for(let i=0;i<f.length;i+=3)for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],f[i+a]);hi[a]=Math.max(hi[a],f[i+a])}S.mesh={f,lo,hi,yaw:.62,pitch:1.02,zoom:fitZoom(lo,hi),dims:data.dims,data};$('viewEmpty').hidden=true;$('viewHint').hidden=false;$('resetView').hidden=false;$('viewTitle').textContent=data.name;const shown=data.facets>f.length/9?t('view.shown',{n:Number(f.length/9).toLocaleString(locale())}):'';$('viewMeta').textContent=t('view.meta',{dims:data.dims.map(v=>fmt(v)).join(' × '),facets:Number(data.facets).toLocaleString(locale())})+shown;renderMesh()}
+function drawMesh(data){if(!data||!data.vertices){S.mesh=null;drawEmptyView();return}const bin=atob(data.vertices),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const f=new Float32Array(arr.buffer,0,arr.length>>2);let lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];for(let i=0;i<f.length;i+=3)for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],f[i+a]);hi[a]=Math.max(hi[a],f[i+a])}S.mesh={f,lo,hi,yaw:.62,pitch:1.02,zoom:fitZoom(lo,hi),dims:data.dims,data};if(data.plate&&data.bed){S.mesh.center=[data.bed[0]/2,data.bed[1]/2];S.mesh.zoom=1}$('viewEmpty').hidden=true;$('viewHint').hidden=false;$('resetView').hidden=false;$('viewTitle').textContent=data.name;const shown=data.facets>f.length/9?t('view.shown',{n:Number(f.length/9).toLocaleString(locale())}):'';$('viewMeta').textContent=t('view.meta',{dims:data.dims.map(v=>fmt(v)).join(' × '),facets:Number(data.facets).toLocaleString(locale())})+shown;renderMesh()}
 function renderMesh(){const m=S.mesh,c=$('view');if(!m)return;const dpr=window.devicePixelRatio||1,w=Math.max(1,c.clientWidth),h=Math.max(1,c.clientHeight);c.width=w*dpr;c.height=h*dpr;const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
-const bx=Number(S.profile?.size?.x)||250,by=Number(S.profile?.size?.y)||250,f=m.f,cx=(m.lo[0]+m.hi[0])/2,cy=(m.lo[1]+m.hi[1])/2,z0=m.lo[2];
+const bx=Number(S.profile?.size?.x)||250,by=Number(S.profile?.size?.y)||250,f=m.f,cx=m.center?m.center[0]:(m.lo[0]+m.hi[0])/2,cy=m.center?m.center[1]:(m.lo[1]+m.hi[1])/2,z0=m.lo[2];
 const cyw=Math.cos(m.yaw),syw=Math.sin(m.yaw),cp=Math.cos(m.pitch),sp=Math.sin(m.pitch);
 const rot=(x,y,z)=>{const x1=cyw*x-syw*y,y1=syw*x+cyw*y;return [x1,cp*y1-sp*z,sp*y1+cp*z]};
 const corners=[[-bx/2,-by/2,0],[bx/2,-by/2,0],[bx/2,by/2,0],[-bx/2,by/2,0]];const top=Math.max(1,m.hi[2]-m.lo[2]);const probe=corners.concat(corners.map(p=>[p[0],p[1],top])).map(p=>rot(...p));
@@ -715,7 +749,7 @@ ctx.lineWidth=.6;for(let x=-bx/2;x<=bx/2+.01;x+=10){const major=Math.abs((x+bx/2
 for(let y=-by/2;y<=by/2+.01;y+=10){const major=Math.abs((y+by/2)%50)<.01;ctx.strokeStyle=dark?`rgba(255,255,255,${major?.14:.05})`:`rgba(20,40,60,${major?.16:.06})`;const a=P(rot(-bx/2,y,0)),b=P(rot(bx/2,y,0));ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke()}
 ctx.beginPath();bed.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();ctx.strokeStyle=`rgba(${ar},${ag},${ab},.85)`;ctx.lineWidth=1.6;ctx.stroke();
 const origin=P(rot(-bx/2,-by/2,0)),ax=P(rot(-bx/2+Math.min(40,bx/5),-by/2,0)),ay=P(rot(-bx/2,-by/2+Math.min(40,by/5),0));ctx.lineWidth=2.2;ctx.strokeStyle='#e5484d';ctx.beginPath();ctx.moveTo(...origin);ctx.lineTo(...ax);ctx.stroke();ctx.strokeStyle='#30a46c';ctx.beginPath();ctx.moveTo(...origin);ctx.lineTo(...ay);ctx.stroke();
-const hx=(m.hi[0]-m.lo[0])/2,hy=(m.hi[1]-m.lo[1])/2,shadow=[[-hx,-hy,0],[hx,-hy,0],[hx,hy,0],[-hx,hy,0]].map(p=>P(rot(...p)));ctx.beginPath();shadow.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();ctx.fillStyle='rgba(0,0,0,.13)';ctx.filter='blur(6px)';ctx.fill();ctx.filter='none';
+const hx=(m.hi[0]-m.lo[0])/2,hy=(m.hi[1]-m.lo[1])/2,shadow=[[-hx,-hy,0],[hx,-hy,0],[hx,hy,0],[-hx,hy,0]].map(p=>P(rot(...p)));ctx.beginPath();shadow.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();if(!m.center){ctx.fillStyle='rgba(0,0,0,.13)';ctx.filter='blur(6px)';ctx.fill();ctx.filter='none'}
 if(!glDraw(m,{w,h,dpr,ox,oy,scale,cyw,syw,cp,sp,cx,cy,z0,dark,rgb:[ar,ag,ab]})){const L=[.35,-.55,.76],ln=Math.hypot(...L),lx=L[0]/ln,ly=L[1]/ln,lz=L[2]/ln,tris=[];
 for(let i=0;i+8<f.length;i+=9){const a=rot(f[i]-cx,f[i+1]-cy,f[i+2]-z0),b=rot(f[i+3]-cx,f[i+4]-cy,f[i+5]-z0),d=rot(f[i+6]-cx,f[i+7]-cy,f[i+8]-z0);const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=d[0]-a[0],vy=d[1]-a[1],vz=d[2]-a[2];let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const nl=Math.hypot(nx,ny,nz)||1;nx/=nl;ny/=nl;nz/=nl;const lit=Math.abs(nx*lx+ny*ly+nz*lz);tris.push({a:P(a),b:P(b),d:P(d),z:a[2]+b[2]+d[2],k:.32+.68*lit,rim:Math.pow(1-Math.abs(nz),3)})}
 tris.sort((p,q)=>p.z-q.z);for(const tr of tris){const k=tr.k,r=Math.min(255,ar*k+40*tr.rim+(dark?14:0)),g=Math.min(255,ag*k+40*tr.rim+(dark?14:0)),b=Math.min(255,ab*k+48*tr.rim+(dark?18:0));ctx.beginPath();ctx.moveTo(...tr.a);ctx.lineTo(...tr.b);ctx.lineTo(...tr.d);ctx.closePath();ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;ctx.fill();ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=.5;ctx.stroke()}}
@@ -723,7 +757,8 @@ ctx.fillStyle=dark?'rgba(255,255,255,.55)':'rgba(30,40,50,.55)';ctx.font='11px s
 
 /* plan */
 function renderPlan(plan){S.plan=plan;updateActions();if(!$('zoom').hidden)closeZoom();if(!plan){$('zoomHint').hidden=true;$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);if(plan.count_note==='at_least')pills.push(`<span class="pill warn">${esc(t('plan.at_least',{plates:plural('plan.plates',plan.min_plates)}))}</span>`);if(plan.count_note==='at_most')pills.push(`<span class="pill warn">${esc(t('plan.at_most'))}</span>`);if(plan.smart===true)pills.unshift(`<span class="pill accent">${esc(t('plan.smart'))}</span>`);$('summary').innerHTML=pills.join('');
-$('plates').innerHTML=plan.plates.map((p,pi)=>`<div class="plate" data-plate="${pi}"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(plateMeta(p))}</span></div>${plateSvg(p,pi,false)}</div>`).join('');
+$('plates').innerHTML=plan.plates.map((p,pi)=>`<div class="plate" data-plate="${pi}"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(plateMeta(p))}</span><button class="small view3d" data-view3d="${pi}" title="${esc(t('plan.view3d_tip'))}">${esc(t('plan.view3d'))}</button></div>${plateSvg(p,pi,false)}</div>`).join('');
+ document.querySelectorAll('[data-view3d]').forEach(b=>b.onclick=e=>{e.stopPropagation();S.plateView=Number(b.dataset.view3d);status(t('st.opening'));send('plate_view',{plate:S.plateView})});
  $('zoomHint').hidden=!plan.plates.length}
 function plateMeta(p){const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(S.plan.bed.x*S.plan.bed.y)*100;return t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)})}
 function itemTitle(it){return `${it.name} · ${fmt(it.w)} × ${fmt(it.h)} ${t('unit.mm')}${(it.angle||it.rotated)?t('plan.rotated',{n:((it.angle||0)+(it.rotated?90:0))%360}):''}`}
@@ -763,10 +798,12 @@ document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>setMode(b.
 // Empty or 0 is "auto": as few plates as the parts fit on.
 function wantedPlates(){const v=Math.round(Number($('plateCount').value));return v>0?Math.min(50,v):0}
 $('plateCount').onchange=()=>{const v=wantedPlates();$('plateCount').value=v||''};
-$('plan').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member)})};
-$('planSmart').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member),smart:true})};
+$('plan').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member),basket:inBasket()})};
+$('planSmart').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member),smart:true,basket:inBasket()})};
+$('toBasket').onclick=()=>{const m=selectedStl().map(p=>p.member);if(m.length)send('basket_add',{members:m})};
+$('basketTab').onclick=()=>setView(inBasket()?'source':'basket');
 $('sendPrepare').onclick=()=>{if(!S.busy){status(t('st.building'));send('export_project')}};
-$('nativeArrange').onclick=()=>{if(!S.busy)send('native_arrange',{included:selectedStl().map(p=>p.member)})};
+$('nativeArrange').onclick=()=>{if(!S.busy)send('native_arrange',{included:selectedStl().map(p=>p.member),basket:inBasket()})};
 $('modalYes').onclick=()=>finishAsk(true);$('modalNo').onclick=()=>finishAsk(false);
 const view=$('view');view.onpointerdown=e=>{if(!S.mesh)return;S.drag={x:e.clientX,y:e.clientY};view.setPointerCapture(e.pointerId)};view.onpointermove=e=>{if(!S.drag||!S.mesh)return;S.mesh.yaw+=(e.clientX-S.drag.x)*.01;S.mesh.pitch=Math.max(.05,Math.min(1.55,S.mesh.pitch+(e.clientY-S.drag.y)*.01));S.drag={x:e.clientX,y:e.clientY};renderMesh()};view.onpointerup=()=>S.drag=null;
 view.onwheel=e=>{if(!S.mesh)return;e.preventDefault();S.mesh.zoom=Math.max(.4,Math.min(6,S.mesh.zoom*(e.deltaY<0?1.12:1/1.12)));renderMesh()};
@@ -808,11 +845,12 @@ orca.onMessage(msg=>{const k=msg.type;
  else if(k==='archives'){S.archives=msg.archives||[];S.folders=msg.folders||[];renderArchives();renderFolders();if(S.scanning){S.scanning=false;if(!S.importing)setBusy(false);const n=S.archives.filter(a=>a.new).length,sources=plural('folders.sources',S.archives.filter(a=>a.likely!==false).length);if(!S.archives.length&&!S.folders.length)status(t('st.choose_folder'));else status(n?t('st.scanned_new',{sources,n}):t('st.scanned',{sources}),'ok')}}
  else if(k==='folder_selected'){if(msg.path)$('folder').value=msg.path}
  else if(k==='folder_list'){S.config.folders=msg.folders||[];renderFolders();renderArchives()}
- else if(k==='archive'){S.selected=msg.path;S.selectedKind=msg.kind;S.selectedName=msg.name;S.selectedAdded=!!msg.added;S.parts=msg.parts||[];S.previewIndex=-1;S.mesh=null;if(!S.importing)setBusy(false);renderSourceHead();renderArchives();renderParts();renderPlan(null);drawEmptyView();status(msg.error||t('st.opened_source',{name:msg.name}),msg.error?'warn':'info');startOrientCheck()}
+ else if(k==='basket'){const grew=msg.total>(S.basket.total||0);S.basket=msg;if(inBasket())invalidatePlan();renderBasket();if(grew&&!inBasket())status(t('basket.added',{n:msg.total}),'info')}
+ else if(k==='archive'){S.view='source';S.previewMember=null;S.selected=msg.path;S.selectedKind=msg.kind;S.selectedName=msg.name;S.selectedAdded=!!msg.added;S.parts=msg.parts||[];S.previewIndex=-1;S.mesh=null;if(!S.importing)setBusy(false);renderSourceHead();renderArchives();renderParts();renderPlan(null);drawEmptyView();status(msg.error||t('st.opened_source',{name:msg.name}),msg.error?'warn':'info');startOrientCheck()}
  else if(k==='orient_advice'){if(msg.index>=0&&S.parts[msg.index]){S.parts[msg.index].advice=msg.advice||null}S.orient={done:msg.done,total:msg.total};if(msg.next>=0){const token=S.orientToken;setTimeout(()=>{if(token===S.orientToken)send('orient_check',{index:msg.next})},20)}renderParts()}
  else if(k==='parts_turned'){for(const c of msg.parts||[]){const p=S.parts[c.index];if(!p)continue;p.dims=c.dims;p.turned=c.turned?p.advice.pct:null}invalidatePlan();renderParts();if(S.previewIndex>=0&&(msg.parts||[]).some(c=>c.index===S.previewIndex))send('preview_part',{index:S.previewIndex,max_facets:previewBudget()})}
  else if(k==='import_next'){if(S.importWait){const w=S.importWait;S.importWait=null;w.res(msg)}}
- else if(k==='preview'){drawMesh(msg)}
+ else if(k==='preview'){if(!msg.plate&&!S.previewMember)S.plateView=null;drawMesh(msg);if(msg.plate){$('viewMeta').textContent=t('view.plate_meta',{parts:plural('plan.parts',msg.parts||0),bed:`${fmt(msg.bed[0])} × ${fmt(msg.bed[1])} ${t('unit.mm')}`});status(t('st.plate_shown',{name:msg.name}))}}
  else if(k==='plan'){setProfile(msg.profile);renderPlan(msg);status(t(msg.exportable?'st.plan_ready':'st.plan_problems'),msg.exportable?'ok':'warn')}
  else if(k==='project_ready'){setBusy(false);status(msg.opened?t('st.project_opened'):t('st.project_saved',{path:msg.path,error:msg.error||''}),msg.opened?'ok':'warn')}
  else if(k==='native_arrange_started'){setBusy(true);status(t('st.arranging',{n:msg.count}));scheduleNativeTick()}
@@ -1932,6 +1970,44 @@ def _turned_stl(raw, rows):
         count += 1
     struct.pack_into("<I", out, 80, count)
     return bytes(out) + b"".join(pieces)
+
+
+BASKET_MAX_COPIES = 50
+MAX_PLATE_VIEW_FACETS = 160000   # a whole plate in the 3D view, shared among its parts
+
+
+def _plate_mesh(plate, blobs, budget):
+    """The parts of a planned plate as float32 triangles in bed millimetres, simplified so the
+    plate stays light, and placed the way _write_orca_project() places them."""
+    import array
+    items = plate["items"]
+    share = max(1500, budget // max(1, len(items)))
+    out = array.array("f")
+    facets = 0
+    for item in items:
+        info = _binary_stl_info(blobs[item["member"]], include_preview=True, max_facets=share)
+        flat = array.array("f")
+        flat.frombytes(base64.b64decode(info["vertices"] or ""))
+        if sys.byteorder != "little":
+            flat.byteswap()
+        angle = math.radians(float(item.get("angle", 0)) + (90 if item.get("rotated") else 0))
+        c, s = math.cos(angle), math.sin(angle)
+        if abs(s) < 1e-12 or abs(c) < 1e-12:
+            c, s = round(c), round(s)
+        xs = [flat[i] * c - flat[i + 1] * s for i in range(0, len(flat), 3)]
+        ys = [flat[i] * s + flat[i + 1] * c for i in range(0, len(flat), 3)]
+        zs = flat[2::3]
+        if not xs:
+            continue
+        dx = float(item["x"]) + float(item["w"]) / 2 - (min(xs) + max(xs)) / 2
+        dy = float(item["y"]) + float(item["h"]) / 2 - (min(ys) + max(ys)) / 2
+        dz = -min(zs)
+        for x, y, z in zip(xs, ys, zs):
+            out.extend((x + dx, y + dy, z + dz))
+        facets += len(xs) // 3
+    if sys.byteorder != "little":
+        out.byteswap()
+    return out.tobytes(), facets
 
 
 def _footprint_hull(raw):
@@ -3210,6 +3286,132 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
         return blobs
 
+    # The basket: parts from several sources, laid out together. Each entry remembers where its
+    # part came from and how it was turned; it is read from there again, with the usual checks,
+    # whenever it is laid out or exported. The basket lasts while OrcaSlicer runs.
+    def _basket_entries(self):
+        if getattr(self, "_basket", None) is None:
+            self._basket, self._basket_version, self._basket_next = [], 0, 1
+        return self._basket
+
+    def _basket_post(self):
+        entries = self._basket_entries()
+        self.post_message({"type": "basket", "version": self._basket_version, "total": sum(e["copies"] for e in entries),
+                           "items": [{"id": e["id"], "name": e["name"], "source_name": e["source_name"], "dims": e["dims"],
+                                      "copies": e["copies"], "turned": bool(e["turn"])} for e in entries]})
+
+    def _basket_changed(self):
+        self._basket_version += 1
+        if getattr(self, "_last_plan", None) and self._last_plan.get("basket"):
+            self._last_plan = None
+        self._basket_post()
+
+    def _basket_add(self, config, members):
+        source = getattr(self, "_selected_source", None)
+        if not source:
+            raise ValueError(_t("err.select_source"))
+        entries = self._basket_entries()
+        members = set(str(m) for m in members)
+        raw_dims = {part.get("member"): part.get("dims") for part in getattr(self, "_open_parts", [])}
+        name = getattr(self, "_selected_name", "") or os.path.basename(source[0])
+        for part in self._current_parts(config):
+            member = part.get("member")
+            if member not in members or part.get("filetype") not in ("stl", "3mf") or part.get("blocked"):
+                continue
+            turn = getattr(self, "_turns", {}).get(member)
+            if any(e["source"][0] == source[0] and e["member"] == member and e["turn"] == turn for e in entries):
+                continue   # already there: the copies field asks for more
+            entries.append({"id": self._basket_next, "source": source, "source_name": name, "member": member,
+                            "name": part["name"], "filetype": part["filetype"], "dims": list(part["dims"]),
+                            "raw_dims": list(raw_dims.get(member) or part["dims"]), "facets": part.get("facets", 0),
+                            "turn": turn, "copies": 1})
+            self._basket_next += 1
+        self._basket_changed()
+
+    def _basket_set(self, entry_id, copies=None, remove=False):
+        entries = self._basket_entries()
+        for entry in list(entries):
+            if entry["id"] == entry_id:
+                if remove:
+                    entries.remove(entry)
+                else:
+                    entry["copies"] = max(1, min(BASKET_MAX_COPIES, int(copies)))
+        self._basket_changed()
+
+    def _basket_name(self):
+        names = []
+        for entry in self._basket_entries():
+            if entry["source_name"] not in names:
+                names.append(entry["source_name"])
+        if len(names) <= 2:
+            return " + ".join(_project_base(n) for n in names) or _t("basket.title")
+        return _t("basket.and_more", name=_project_base(names[0]), n=len(names) - 1)
+
+    def _read_basket_blobs(self, members):
+        """The basket's parts as binary STL, each read again from its own source with the same
+        checks as an open source; a part changed on disk since it went in is refused."""
+        entries = {e["id"]: e for e in self._basket_entries()}
+        listings, by_entry, blobs = {}, {}, {}
+        for member in members:
+            try:
+                _, entry_id, _copy = str(member).split(":")
+                entry = entries[int(entry_id)]
+            except (ValueError, KeyError):
+                raise ValueError(_t("err.part_missing"))
+            if entry["id"] not in by_entry:
+                source = entry["source"]
+                if source[0] not in listings:
+                    path, kind, root, catalog = source
+                    listings[source[0]] = _read_archive(path, root) if kind == "zip" else _read_loose_folder(path, root, catalog)
+                parts = listings[source[0]]
+                current = next((part for part in parts if part.get("member") == entry["member"]), None)
+                if current is None or any(abs(float(a) - float(b)) > 0.001 for a, b in zip(current.get("dims", []), entry["raw_dims"])):
+                    raise ValueError(_t("err.stl_changed"))
+                raw = self._read_raw_blobs(source, parts, [entry["member"]])[entry["member"]]
+                by_entry[entry["id"]] = _turned_stl(raw, entry["turn"]) if entry["turn"] else raw
+            blobs[member] = by_entry[entry["id"]]
+        return blobs
+
+    def _workset(self, config, from_basket):
+        """The parts to lay out: the open source's, or the basket's (one part per copy)."""
+        if from_basket:
+            entries = self._basket_entries()
+            if not entries:
+                raise ValueError(_t("err.basket_empty"))
+            parts = []
+            for entry in entries:
+                for copy in range(1, entry["copies"] + 1):
+                    parts.append({"name": entry["name"] if entry["copies"] == 1 else f'{entry["name"]} ({copy})',
+                                  "member": f'basket:{entry["id"]}:{copy}', "filetype": entry["filetype"],
+                                  "dims": list(entry["dims"]), "facets": entry["facets"], "included": True})
+            return {"key": ("basket", self._basket_version), "parts": parts, "read": self._read_basket_blobs,
+                    "name": self._basket_name(), "basket": True}
+        source = getattr(self, "_selected_source", None)
+        if not source:
+            raise ValueError(_t("err.select_source"))
+        parts = self._current_parts(config)
+        return {"key": source, "parts": parts, "read": lambda members: self._read_stl_blobs(source, parts, members),
+                "name": getattr(self, "_selected_name", "") or os.path.basename(source[0]), "basket": False}
+
+    def _plate_view(self, config, index):
+        """One planned plate as a single mesh for the 3D view: each part simplified, turned and
+        placed as the project will have it, in bed millimetres."""
+        plan = getattr(self, "_last_plan", None)
+        if not plan:
+            raise ValueError(_t("err.plan_source"))
+        ws = self._workset(config, plan.get("basket"))
+        if plan.get("source") != ws["key"] or index < 0 or index >= len(plan["plates"]):
+            raise ValueError(_t("err.plan_source"))
+        plate = plan["plates"][index]
+        blobs = ws["read"]({item["member"] for item in plate["items"]})
+        vertices, facets = _plate_mesh(plate, blobs, MAX_PLATE_VIEW_FACETS)
+        size = plan["profile"]["size"]
+        bed = [float(size.get("x", 0)), float(size.get("y", 0))]
+        top = max([float(item.get("z", 0)) for item in plate["items"]] + [1.0])
+        self.post_message({"type": "preview", "name": _t("plan.plate", n=index + 1), "facets": facets,
+                           "dims": [bed[0], bed[1], top], "vertices": base64.b64encode(vertices).decode("ascii"),
+                           "plate": True, "bed": bed, "parts": len(plate["items"])})
+
     def _orient_check(self, index):
         """Check one part of the open source and say which comes next: the page asks part by part,
         so Orca stays responsive while a big source is checked."""
@@ -3279,15 +3481,13 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         _send_to_own_window(path)
         self._notice(_t("msg.step_sent", name=part["name"]), "ok")
 
-    def _start_native_arrange(self, config, included):
+    def _start_native_arrange(self, config, included, from_basket=False):
         if getattr(self, "_native_arrange_job", None):
             raise ValueError(_t("err.arrange_running"))
-        source = getattr(self, "_selected_source", None)
-        if not source:
-            raise ValueError(_t("err.select_source"))
+        ws = self._workset(config, from_basket)
         included = set(str(value) for value in included)
-        all_parts = self._current_parts(config)
-        parts = [part for part in all_parts if part.get("filetype") in ("stl", "3mf") and part.get("member") in included]
+        all_parts = ws["parts"]
+        parts = [part for part in all_parts if part.get("filetype") in ("stl", "3mf") and (ws["basket"] or part.get("member") in included)]
         if not parts:
             raise ValueError(_t("err.select_stl"))
         if len(parts) > MAX_NATIVE_PARTS:
@@ -3301,7 +3501,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         input_dir = os.path.join(run_dir, "input")
         os.makedirs(input_dir, exist_ok=False)
         try:
-            blobs = self._read_stl_blobs(source, all_parts, [part["member"] for part in parts])
+            blobs = ws["read"]([part["member"] for part in parts])
             inputs = []
             names = {}
             for index, part in enumerate(parts, 1):
@@ -3329,7 +3529,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             self._native_arrange_job = {
                 "process": process, "run_dir": run_dir, "input_dir": input_dir, "output": output,
                 "log": log_path, "count": len(inputs), "started": time.time(), "project_settings": project_settings,
-                "names": names, "source_name": getattr(self, "_selected_name", "") or os.path.basename(source[0]),
+                "names": names, "source_name": ws["name"],
             }
             self.post_message({"type": "native_arrange_started", "count": len(inputs)})
         except Exception:
@@ -3486,17 +3686,26 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             elif kind == "open_in_orca":
                 self._open_step_in_orca(config, int(data.get("index", -1)))
             elif kind == "preview_part":
-                source = getattr(self, "_selected_source", None)
-                parts = self._current_parts(config)
-                index = int(data.get("index", -1))
-                if index < 0 or index >= len(parts):
-                    raise ValueError(_t("err.part_missing"))
-                member = parts[index].get("member")
-                if not member or parts[index].get("filetype") not in ("stl", "3mf") or parts[index].get("blocked"):
-                    raise ValueError(_t("err.no_preview"))
-                if source[1] != "zip" and not _safe_archive_path(_split_member(member)[0], source[2]):
-                    raise ValueError(_t("err.stl_outside"))
-                raw = self._read_stl_blobs(source, parts, [member])[member]
+                if str(data.get("member", "")).startswith("basket:"):
+                    ws = self._workset(config, True)
+                    member = str(data["member"])
+                    found = [part for part in ws["parts"] if part["member"] == member]
+                    if not found:
+                        raise ValueError(_t("err.part_missing"))
+                    parts, index = found, 0
+                    raw = ws["read"]([member])[member]
+                else:
+                    source = getattr(self, "_selected_source", None)
+                    parts = self._current_parts(config)
+                    index = int(data.get("index", -1))
+                    if index < 0 or index >= len(parts):
+                        raise ValueError(_t("err.part_missing"))
+                    member = parts[index].get("member")
+                    if not member or parts[index].get("filetype") not in ("stl", "3mf") or parts[index].get("blocked"):
+                        raise ValueError(_t("err.no_preview"))
+                    if source[1] != "zip" and not _safe_archive_path(_split_member(member)[0], source[2]):
+                        raise ValueError(_t("err.stl_outside"))
+                    raw = self._read_stl_blobs(source, parts, [member])[member]
                 # The page asks for fewer facets when it draws without WebGL.
                 limit = max(1000, min(MAX_PREVIEW_FACETS, int(data.get("max_facets") or MAX_PREVIEW_FACETS)))
                 # Simplifying a large part takes about a second, so the last few previews are kept.
@@ -3511,10 +3720,13 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     previews.pop(next(iter(previews)))
                 self.post_message({"type": "preview", "name": parts[index]["name"], "facets": info["facets"], "dims": info["dims"], "vertices": info["vertices"]})
             elif kind == "plan":
-                source = getattr(self, "_selected_source", None)
-                all_parts = self._current_parts(config)
-                included_members = set(str(n) for n in data.get("included", []))
-                selected = [p for p in all_parts if p.get("member") in included_members and p["included"]]
+                ws = self._workset(config, bool(data.get("basket")))
+                all_parts = ws["parts"]
+                if ws["basket"]:
+                    selected = list(all_parts)
+                else:
+                    included_members = set(str(n) for n in data.get("included", []))
+                    selected = [p for p in all_parts if p.get("member") in included_members and p["included"]]
                 profile = _get_profile()
                 if not profile or not profile.get("size"):
                     raise ValueError(_t("err.no_printable_area"))
@@ -3524,7 +3736,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 too_wide = [p for p in selected if not ((p["dims"][0] <= bed_x - 2 * gap and p["dims"][1] <= bed_y - 2 * gap)
                                                         or (p["dims"][1] <= bed_x - 2 * gap and p["dims"][0] <= bed_y - 2 * gap))]
                 if too_wide:
-                    blobs = self._read_stl_blobs(source, all_parts, [p["member"] for p in too_wide])
+                    blobs = ws["read"]([p["member"] for p in too_wide])
                     selected = [dict(p, source_dims=p["dims"]) for p in selected]
                     selected = _turn_to_fit(selected, blobs, bed_x, bed_y, margin)
                 try:
@@ -3540,11 +3752,15 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                                    "total": result["total"], "problems": result["problems"], "too_tall": too_tall,
                                    "exclusions": profile.get("exclusions"), "exportable": exportable, "smart": result.get("smart", False),
                                    "min_plates": result.get("min_plates"), "count_note": result.get("count_note")})
-                self._last_plan = {"source": source, "plates": result["plates"], "profile": profile, "exportable": exportable}
+                self._last_plan = {"source": ws["key"], "plates": result["plates"], "profile": profile, "exportable": exportable,
+                                   "basket": ws["basket"]}
             elif kind == "export_project":
                 plan = getattr(self, "_last_plan", None)
-                source = getattr(self, "_selected_source", None)
-                if not plan or not source or plan.get("source") != source:
+                try:
+                    ws = self._workset(config, plan.get("basket")) if plan else None
+                except ValueError:
+                    ws = None
+                if not plan or not ws or plan.get("source") != ws["key"]:
                     raise ValueError(_t("err.plan_source"))
                 if not plan.get("exportable"):
                     raise ValueError(_t("err.plan_not_exportable"))
@@ -3554,7 +3770,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     any(abs(float(active_profile.get("size", {}).get(axis, 0)) - float(planned_profile.get("size", {}).get(axis, 0))) > 0.001
                         for axis in ("x", "y", "origin_x", "origin_y"))):
                     raise ValueError(_t("err.printer_changed"))
-                parts = self._current_parts(config)
+                parts = ws["parts"]
                 by_member = {part.get("member"): part for part in parts if part.get("member")}
                 for plate in plan["plates"]:
                     for item in plate["items"]:
@@ -3562,8 +3778,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                         if current is None or any(abs(float(a) - float(b)) > 0.001 for a, b in zip(current.get("dims", []), item.get("source_dims", []))):
                             raise ValueError(_t("err.stl_changed"))
                 members = {item.get("member") for plate in plan["plates"] for item in plate["items"]}
-                blobs = self._read_stl_blobs(source, parts, members)
-                name = getattr(self, "_selected_name", "") or os.path.basename(source[0])
+                blobs = ws["read"](members)
+                name = ws["name"]
                 output = self._project_path(name)
                 _write_orca_project(output, plan["plates"], blobs, plan["profile"], _app_version(), _project_settings(),
                                     title=_project_base(name))
@@ -3574,7 +3790,20 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 except Exception as exc:
                     self.post_message({"type": "project_ready", "path": output, "opened": False, "error": str(exc)[:180]})
             elif kind == "native_arrange":
-                self._start_native_arrange(config, data.get("included", []))
+                self._start_native_arrange(config, data.get("included", []), bool(data.get("basket")))
+            elif kind == "plate_view":
+                self._plate_view(config, int(data.get("plate", -1)))
+            elif kind == "basket_add":
+                self._basket_add(config, data.get("members", []))
+            elif kind == "basket_set":
+                self._basket_set(int(data.get("id", -1)), copies=data.get("copies", 1))
+            elif kind == "basket_remove":
+                self._basket_set(int(data.get("id", -1)), remove=True)
+            elif kind == "basket_clear":
+                self._basket_entries().clear()
+                self._basket_changed()
+            elif kind == "basket_list":
+                self._basket_post()
             elif kind == "native_arrange_tick":
                 self._poll_native_arrange()
             else:

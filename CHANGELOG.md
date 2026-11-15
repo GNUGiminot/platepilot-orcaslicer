@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- **Basket: parts from several sources in one layout.** Tick parts in any archive or folder and press **To basket**; open another source and add more. **Basket · N** above the parts list shows them, each with its source and a **copies** field (up to 50). With the basket open, Calculate, Smart layout and Orca auto-arrange lay out the basket's parts together, for example two archives with one model each on a single plate. Each part is read again from its own source with the usual checks, so a file changed on disk since it went in is refused; a part turned with Turn goes in turned. The project is named after the sources: "Dragon + Stand - PlatePilot.3mf", or "Dragon and 2 more". The basket lasts while OrcaSlicer runs.
+- **Each planned plate in 3D.** A **3D** button on every plate shows it in the preview on the right: all its parts, simplified, turned and placed as the project will have them, on the printer's bed. Drag to turn it, as with a single part.
+
 ## 0.8.0
 
 - **Parts lying the wrong way are pointed out.** When a source opens, PlatePilot checks how each STL and 3MF part lies: for the sides it could lie on (the six axis sides and its largest flat faces) it compares the area that would hang over air steeper than 45° and the area that would touch the bed. A part that lies clearly worse than it could, upside down or on a narrow edge, gets a note in the list ("lies better turned: 85% less overhang") and a **Turn** button. **Turn all suggested** turns them in one go, **Undo turn** puts a part back. Nothing is turned by itself, and a part is flagged only when the gain is large, so a part its designer laid out on purpose is left alone. A turned part is turned everywhere: in the preview, in both PlatePilot layouts (with its new footprint), in the project and in Orca auto-arrange. The check runs part by part and does not hold up the page; big meshes are sampled.

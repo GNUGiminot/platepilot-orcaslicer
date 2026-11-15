@@ -1009,6 +1009,130 @@ class Orientation(unittest.TestCase):
             pp._get_profile, pp._project_settings, pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen = saved
 
 
+class Basket(unittest.TestCase):
+    """Parts from several sources laid out together, and a plate seen in 3D."""
+
+    def setUp(self):
+        self.saved = (pp._get_profile, pp._project_settings, pp._app_version, pp._open_project)
+        self.opened = []
+        pp._get_profile = lambda: {"name": "Test printer", "size": {"x": 245, "y": 245}, "height": 250}
+        pp._project_settings = lambda: "{}"
+        pp._app_version = lambda: "2.5.0"
+        pp._open_project = self.opened.append
+        self.storage = tempfile.TemporaryDirectory()
+        self.root_dir = tempfile.TemporaryDirectory()
+        self.root = os.path.realpath(self.root_dir.name)
+        for name, raw in (("Dragon.zip", box_stl(40, 30, 20)), ("Stand.zip", box_stl(60, 50, 10))):
+            with zipfile.ZipFile(os.path.join(self.root, name), "w") as archive:
+                archive.writestr(name.replace(".zip", ".stl"), raw)
+        self.page = FakePage(self.storage.name)
+        self.page.config_text = json.dumps({"folders": [self.root]})
+        self.page.send({"type": "scan"})
+
+    def tearDown(self):
+        pp._get_profile, pp._project_settings, pp._app_version, pp._open_project = self.saved
+        self.storage.cleanup()
+        self.root_dir.cleanup()
+
+    def add(self, archive, member):
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, archive), "kind": "zip"})
+        return self.page.send({"type": "basket_add", "members": [member]})
+
+    def test_two_sources_on_one_plate_and_into_one_project(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        basket = self.add("Stand.zip", "Stand.stl")
+        self.assertEqual(basket["type"], "basket")
+        self.assertEqual([(i["name"], i["source_name"], i["copies"]) for i in basket["items"]],
+                         [("Dragon.stl", "Dragon.zip", 1), ("Stand.stl", "Stand.zip", 1)])
+        self.assertEqual(self.add("Stand.zip", "Stand.stl")["total"], 2)       # already there: not twice
+        plan = self.page.send({"type": "plan", "margin": 4, "plates": 1, "basket": True})
+        self.assertEqual(plan["type"], "plan")
+        self.assertEqual(len(plan["plates"]), 1)
+        self.assertEqual(sorted(i["name"] for i in plan["plates"][0]["items"]), ["Dragon.stl", "Stand.stl"])
+        reply = self.page.send({"type": "export_project"})
+        self.assertEqual(os.path.basename(reply["path"]), "Dragon + Stand - PlatePilot.3mf")
+        with zipfile.ZipFile(reply["path"]) as project:
+            model = project.read("3D/3dmodel.model").decode()
+        self.assertEqual(model.count("<object "), 2)
+
+    def test_copies_and_removal(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        basket = self.add("Stand.zip", "Stand.stl")
+        dragon = basket["items"][0]["id"]
+        basket = self.page.send({"type": "basket_set", "id": dragon, "copies": 4})
+        self.assertEqual(basket["total"], 5)
+        plan = self.page.send({"type": "plan", "margin": 4, "basket": True})
+        names = sorted(i["name"] for p in plan["plates"] for i in p["items"])
+        self.assertEqual(names, ["Dragon.stl (1)", "Dragon.stl (2)", "Dragon.stl (3)", "Dragon.stl (4)", "Stand.stl"])
+        basket = self.page.send({"type": "basket_remove", "id": dragon})
+        self.assertEqual([i["name"] for i in basket["items"]], ["Stand.stl"])
+        with self.assertRaises(AssertionError):                                # the plan was of the old basket
+            self.page.send({"type": "export_project"})
+        self.page.messages.clear()
+        self.assertEqual(self.page.send({"type": "basket_clear"})["total"], 0)
+        with self.assertRaises(AssertionError):
+            self.page.send({"type": "plan", "margin": 4, "basket": True})
+
+    def test_a_part_changed_on_disk_is_refused(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        self.page.send({"type": "plan", "margin": 4, "basket": True})
+        with zipfile.ZipFile(os.path.join(self.root, "Dragon.zip"), "w") as archive:
+            archive.writestr("Dragon.stl", box_stl(41, 30, 20))
+        self.page.messages.clear()
+        with self.assertRaises(AssertionError) as caught:
+            self.page.send({"type": "export_project"})
+        self.assertIn(pp._t("err.stl_changed"), str(caught.exception))
+
+    def test_a_turned_part_goes_in_turned(self):
+        sideways = boxes_stl((0, 15, 15, 24, 25, 25), (20, 0, 0, 24, 40, 40))
+        with zipfile.ZipFile(os.path.join(self.root, "Table.zip"), "w") as archive:
+            archive.writestr("Table.stl", sideways)
+        self.page.send({"type": "scan"})
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Table.zip"), "kind": "zip"})
+        self.page.send({"type": "orient_check", "index": 0})
+        self.page.send({"type": "turn_part", "index": 0, "on": True})
+        basket = self.page.send({"type": "basket_add", "members": ["Table.stl"]})
+        self.assertTrue(basket["items"][0]["turned"])
+        self.assertEqual([round(v, 3) for v in basket["items"][0]["dims"]], [40.0, 40.0, 24.0])
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Dragon.zip"), "kind": "zip"})   # turns reset there
+        blob = self.page._read_basket_blobs(["basket:%d:1" % basket["items"][0]["id"]])
+        self.assertEqual([round(v, 3) for v in pp._binary_stl_info(next(iter(blob.values())))["dims"]], [40.0, 40.0, 24.0])
+
+    def test_a_plate_in_3d(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        self.add("Stand.zip", "Stand.stl")
+        plan = self.page.send({"type": "plan", "margin": 4, "plates": 1, "basket": True})
+        view = self.page.send({"type": "plate_view", "plate": 0})
+        self.assertEqual(view["type"], "preview")
+        self.assertTrue(view["plate"])
+        self.assertEqual(view["bed"], [245.0, 245.0])
+        floats = struct.unpack("<%df" % (len(base64.b64decode(view["vertices"])) // 4), base64.b64decode(view["vertices"]))
+        self.assertEqual(view["facets"], 24)
+        xs, ys, zs = floats[0::3], floats[1::3], floats[2::3]
+        self.assertAlmostEqual(min(zs), 0.0, places=4)
+        self.assertAlmostEqual(max(zs), 20.0, places=4)
+        # Every part sits in the cell the plan gave it.
+        for item in plan["plates"][0]["items"]:
+            inside = [i for i in range(len(xs)) if item["x"] - 0.01 <= xs[i] <= item["x"] + item["w"] + 0.01
+                      and item["y"] - 0.01 <= ys[i] <= item["y"] + item["h"] + 0.01]
+            self.assertEqual(len(inside), 36, item["name"])
+
+    def test_orca_arrange_takes_the_basket(self):
+        saved = (pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen)
+        commands = []
+        pp._orca_executable = lambda: "orca-slicer"
+        pp._write_cli_settings = lambda folder: ["machine.json"]
+        pp.subprocess.Popen = lambda command, **kw: commands.append(command) or types.SimpleNamespace(poll=lambda: None)
+        try:
+            self.add("Dragon.zip", "Dragon.stl")
+            self.add("Stand.zip", "Stand.stl")
+            self.page.send({"type": "native_arrange", "included": [], "basket": True})
+            self.assertEqual(len([a for a in commands[0] if a.endswith(".stl")]), 2)
+            self.assertEqual(self.page._native_arrange_job["source_name"], "Dragon + Stand")
+        finally:
+            pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen = saved
+
+
 class DropIntoPlatePilot(unittest.TestCase):
     def test_dropped_files_are_copied_listed_and_opened(self):
         with tempfile.TemporaryDirectory() as storage:
