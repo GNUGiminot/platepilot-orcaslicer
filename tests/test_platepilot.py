@@ -1081,7 +1081,57 @@ class Basket(unittest.TestCase):
         self.page.messages.clear()
         with self.assertRaises(AssertionError) as caught:
             self.page.send({"type": "export_project"})
-        self.assertIn(pp._t("err.stl_changed"), str(caught.exception))
+        self.assertIn(pp._t("err.basket_gone", name="Dragon.stl"), str(caught.exception))
+
+    def test_a_source_gone_from_disk_says_so(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        os.remove(os.path.join(self.root, "Dragon.zip"))
+        self.page.messages.clear()
+        with self.assertRaises(AssertionError) as caught:
+            self.page.send({"type": "plan", "margin": 4, "basket": True, "plates": 0})
+            self.page.send({"type": "plate_view", "plate": 0})
+        self.assertIn(pp._t("err.basket_gone", name="Dragon.stl"), str(caught.exception))
+
+    def test_the_page_learns_the_basket_again_after_a_reload(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        self.page.messages.clear()
+        self.page.send({"type": "init"})
+        basket = [m for m in self.page.messages if m.get("type") == "basket"]
+        self.assertEqual([i["name"] for i in basket[-1]["items"]], ["Dragon.stl"])
+
+    def test_a_3mf_object_and_a_folder_part_together(self):
+        folder = os.path.join(self.root, "Loose")
+        write_tree(folder, {"Leg.stl": box_stl(10, 10, 30)})
+        with zipfile.ZipFile(os.path.join(self.root, "Kit.zip"), "w") as archive:
+            archive.writestr("kit.3mf", threemf("<resources>" + box_model(20, 20, 5) + box_model(8, 8, 8, object_id="2", name="pin")
+                                                + '</resources><build><item objectid="1"/><item objectid="2"/></build>'))
+        self.page.send({"type": "scan"})
+        self.page.send({"type": "open_model", "path": folder, "kind": "folder"})
+        self.page.send({"type": "basket_add", "members": [p["member"] for p in self.page._open_parts]})
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Kit.zip"), "kind": "zip"})
+        basket = self.page.send({"type": "basket_add", "members": ["kit.3mf#1"]})
+        pin = next(p["name"] for p in self.page._open_parts if p["member"] == "kit.3mf#1")
+        self.assertEqual([i["name"] for i in basket["items"]], ["Leg.stl", pin])
+        self.assertEqual([round(v, 3) for v in basket["items"][1]["dims"]], [8.0, 8.0, 8.0])
+        plan = self.page.send({"type": "plan", "margin": 4, "plates": 1, "basket": True})
+        self.assertEqual(sorted(i["name"] for i in plan["plates"][0]["items"]), sorted(["Leg.stl", pin]))
+        reply = self.page.send({"type": "export_project"})
+        self.assertEqual(os.path.basename(reply["path"]), "Loose + Kit - PlatePilot.3mf")
+
+    def test_folder_copies_the_basket_reads_are_kept(self):
+        folders = []
+        for i in range(pp.FOLDER_CACHE_KEEP + 2):
+            folder = os.path.join(self.root, f"F{i}")
+            write_tree(folder, {f"p{i}.stl": box_stl(10 + i, 10, 10)})
+            folders.append(folder)
+        self.page.send({"type": "scan"})
+        self.page.send({"type": "open_model", "path": folders[0], "kind": "folder"})
+        self.page.send({"type": "basket_add", "members": [p["member"] for p in self.page._open_parts]})
+        for folder in folders[1:]:                                     # more folders than copies are kept
+            self.page.send({"type": "open_model", "path": folder, "kind": "folder"})
+        plan = self.page.send({"type": "plan", "margin": 4, "basket": True})
+        self.assertEqual(plan["type"], "plan")
+        self.page.send({"type": "plate_view", "plate": 0})
 
     def test_a_turned_part_goes_in_turned(self):
         sideways = boxes_stl((0, 15, 15, 24, 25, 25), (20, 0, 0, 24, 40, 40))
@@ -1102,20 +1152,34 @@ class Basket(unittest.TestCase):
         self.add("Dragon.zip", "Dragon.stl")
         self.add("Stand.zip", "Stand.stl")
         plan = self.page.send({"type": "plan", "margin": 4, "plates": 1, "basket": True})
-        view = self.page.send({"type": "plate_view", "plate": 0})
-        self.assertEqual(view["type"], "preview")
-        self.assertTrue(view["plate"])
-        self.assertEqual(view["bed"], [245.0, 245.0])
-        floats = struct.unpack("<%df" % (len(base64.b64decode(view["vertices"])) // 4), base64.b64decode(view["vertices"]))
-        self.assertEqual(view["facets"], 24)
-        xs, ys, zs = floats[0::3], floats[1::3], floats[2::3]
-        self.assertAlmostEqual(min(zs), 0.0, places=4)
-        self.assertAlmostEqual(max(zs), 20.0, places=4)
-        # Every part sits in the cell the plan gave it.
-        for item in plan["plates"][0]["items"]:
-            inside = [i for i in range(len(xs)) if item["x"] - 0.01 <= xs[i] <= item["x"] + item["w"] + 0.01
-                      and item["y"] - 0.01 <= ys[i] <= item["y"] + item["h"] + 0.01]
-            self.assertEqual(len(inside), 36, item["name"])
+        items = plan["plates"][0]["items"]
+        # The page asks part by part, so Orca stays responsive while big parts are simplified.
+        for k, item in enumerate(items):
+            reply = self.page.send({"type": "plate_view", "plate": 0, "part": k})
+            self.assertEqual((reply["type"], reply["part"], reply["count"]), ("plate_part", k, 2))
+            self.assertEqual(reply["bed"], [245.0, 245.0])
+            self.assertEqual(reply["top"], 20.0)
+            data = base64.b64decode(reply["vertices"])
+            floats = struct.unpack("<%df" % (len(data) // 4), data)
+            xs, ys, zs = floats[0::3], floats[1::3], floats[2::3]
+            self.assertEqual(reply["facets"], 12)
+            self.assertAlmostEqual(min(zs), 0.0, places=4)
+            # The part sits in the cell the plan gave it.
+            self.assertAlmostEqual(min(xs), item["x"], places=3)
+            self.assertAlmostEqual(max(xs), item["x"] + item["w"], places=3)
+            self.assertAlmostEqual(min(ys), item["y"], places=3)
+            self.assertAlmostEqual(max(ys), item["y"] + item["h"], places=3)
+        with self.assertRaises(AssertionError):
+            self.page.send({"type": "plate_view", "plate": 0, "part": 2})
+
+    def test_a_turned_cell_in_3d(self):
+        stl = box_stl(40, 10, 5)
+        item = {"x": 100, "y": 50, "w": 10, "h": 40, "rotated": True, "angle": 0}
+        data, facets = pp._placed_mesh(item, stl, 1000, {})
+        floats = struct.unpack("<%df" % (len(data) // 4), data)
+        xs, ys = floats[0::3], floats[1::3]
+        self.assertEqual(facets, 12)
+        self.assertEqual((round(min(xs), 3), round(max(xs), 3), round(min(ys), 3), round(max(ys), 3)), (100, 110, 50, 90))
 
     def test_orca_arrange_takes_the_basket(self):
         saved = (pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen)
