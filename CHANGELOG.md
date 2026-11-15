@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+- **The plates in 3D are easy to find.** After Calculate the first plate shows in 3D in the preview by itself when it is light enough to come whole (up to 250 000 facets in all, about 0.1 s a part). The preview gets **‹ Plate 1 of N in 3D ›** to step through the plates; the layout's summary has **Plates in 3D**; every plate and the plate close-up have an accent **3D** button with a cube instead of a plain word.
+- **Simplified only when it must be.** Parts smaller than an equal share of the plate's budget come whole, and the rest of the budget goes to the bigger ones, so a plate within 250 000 facets is shown exactly as it is. Before, every part got an equal share and a big part was simplified even when the whole plate fitted.
+- The project PlatePilot sends to Orca has always been the full models from the source: only the preview is simplified. A check on a 20 000-facet mesh found every corner where it was, within 0.00001 mm; only zero-area facets are left out, as Orca does when it loads an STL.
+
 ## 0.9.0
 
 - **Basket: parts from several sources in one layout.** Tick parts in any archive or folder and press **To basket**; open another source and add more. **Basket · N** above the parts list shows them, each with its source and a **copies** field (up to 50). With the basket open, Calculate, Smart layout and Orca auto-arrange lay out the basket's parts together, for example two archives with one model each on a single plate. Each part is read again from its own source with the usual checks, so a file changed on disk since it went in is refused; a part turned with Turn goes in turned. The project is named after the sources: "Dragon + Stand - PlatePilot.3mf", or "Dragon and 2 more". The basket lasts while OrcaSlicer runs, and comes back when the tab reloads. Copies of watched folders the basket still reads from are kept; a part whose file was moved, changed or deleted is named, to take out and add again.

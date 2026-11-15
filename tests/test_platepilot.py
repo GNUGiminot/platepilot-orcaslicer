@@ -1181,6 +1181,22 @@ class Basket(unittest.TestCase):
         self.assertEqual(facets, 12)
         self.assertEqual((round(min(xs), 3), round(max(xs), 3), round(min(ys), 3), round(max(ys), 3)), (100, 110, 50, 90))
 
+    def test_small_parts_come_whole_and_big_ones_share_the_rest(self):
+        self.assertEqual(pp._plate_shares([100, 200, 300], 250000), [100, 200, 300])     # within budget: nothing simplified
+        shares = pp._plate_shares([1000, 200000, 300000], 250000)
+        self.assertEqual(shares[0], 1000)
+        self.assertLessEqual(sum(shares), 250000)
+        self.assertEqual(shares[1] + shares[2], 249000)
+        self.assertEqual(shares[1], 124500)                                             # the two big ones split the rest
+        self.assertGreaterEqual(min(pp._plate_shares([10 ** 6] * 400, 250000)), 1500)    # never below a usable floor
+
+    def test_the_plan_says_how_heavy_each_plate_is(self):
+        self.add("Dragon.zip", "Dragon.stl")
+        self.add("Stand.zip", "Stand.stl")
+        plan = self.page.send({"type": "plan", "margin": 4, "plates": 1, "basket": True})
+        self.assertEqual(plan["plates"][0]["facets"], 24)
+        self.assertEqual(plan["view_budget"], pp.MAX_PLATE_VIEW_FACETS)
+
     def test_orca_arrange_takes_the_basket(self):
         saved = (pp._orca_executable, pp._write_cli_settings, pp.subprocess.Popen)
         commands = []

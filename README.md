@@ -20,7 +20,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
   - **PlatePilot layout:** packs parts by their footprint (MaxRects, six orderings, 90° rotation) with an even gap, and shows each plate with its fill percentage before you send it.
   - **Smart layout (beta):** the same number of plates, but the parts of each plate form a group in the middle of the bed, away from its edges and evenly spaced; small parts and parts tall for their footprint get the places nearest the centre, and the plates are filled about evenly.
   - **Plates:** leave it on auto for as few plates as the parts fit on, or set a number to spread them evenly over that many plates.
-  - Click a plate to see it up close, with every part numbered and listed with its size. **3D** shows the plate in the 3D preview, parts turned and placed as in the project.
+  - Click a plate to see it up close, with every part numbered and listed with its size. **3D** shows the plate in the 3D preview, parts turned and placed as in the project; after Calculate the first plate shows there by itself, and **‹ Plate 1 of N ›** steps through the rest.
   - **Orca auto-arrange:** hands the parts to Orca's own arrange, which uses the real part outlines and your active printer and process profiles.
 - **One click to Prepare.** The project opens in the window you already have: one object per part, each on its own plate, with your current printer, process and filament profiles.
 - **English and Russian UI.** Follows Orca's language, or pick one in the settings. Light and dark themes follow Orca.
@@ -114,7 +114,7 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
   - **Раскладка PlatePilot:** укладывает детали по габаритам (MaxRects, шесть порядков, поворот на 90°) с равным зазором и показывает каждый стол с процентом заполнения.
   - **Умная раскладка (бета):** столько же столов, но детали каждого стола собраны в центре, подальше от краёв, с ровными зазорами; мелкие и высокие детали — ближе к середине, столы загружены поровну.
   - **Столов:** «авто» — как можно меньше столов, или задайте число, и детали разойдутся по столам поровну.
-  - По щелчку на стол он открывается крупно: каждая деталь с номером, рядом список с размерами. Кнопка **«3D»** показывает стол в 3D-просмотре: детали повёрнуты и расставлены, как в проекте.
+  - По щелчку на стол он открывается крупно: каждая деталь с номером, рядом список с размерами. Кнопка **«3D»** показывает стол в 3D-просмотре: детали повёрнуты и расставлены, как в проекте; после расчёта первый стол появляется там сам, а **«‹ Стол 1 из N ›»** листает остальные.
   - **Авторасстановка Orca:** передаёт детали встроенной авторасстановке Orca, которая учитывает настоящие контуры деталей и ваши активные профили принтера и процесса.
 - **Один клик до «Подготовки».** Проект открывается в уже открытом окне Orca: каждая деталь отдельным объектом на своём столе, с текущими профилями принтера, процесса и материала.
 - **Интерфейс на русском и английском.** Язык берётся из Orca или выбирается в настройках. Светлая и тёмная тема — как в Orca.

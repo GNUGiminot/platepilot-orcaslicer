@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.9.0"
+# version = "0.9.1"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -28,7 +28,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -219,6 +219,12 @@ STRINGS = {
     "plan.smart": ("smart layout β", "умная раскладка β"),
     "plan.plate": ("Plate {n}", "Стол {n}"),
     "plan.view3d": ("3D", "3D"),
+    "plan.view3d_all": ("Plates in 3D", "Столы в 3D"),
+    "plan.view3d_all_tip": ("See the plates in 3D in the preview, with every part as the project will have it",
+                            "Показать столы в 3D в окне просмотра: детали стоят так, как будут в проекте"),
+    "view.plate_button": ("Plate {n} of {total} in 3D", "Стол {n} из {total} в 3D"),
+    "view.plate_prev": ("Previous plate", "Предыдущий стол"),
+    "view.plate_next": ("Next plate", "Следующий стол"),
     "plan.view3d_tip": ("See this plate in 3D in the preview", "Показать этот стол в 3D в окне просмотра"),
     "view.plate_meta": ("{parts} · bed {bed} · simplified", "{parts} · стол {bed} · упрощённо"),
     "st.plate_shown": ("{name} in 3D: drag to turn it.", "{name} в 3D: потяните, чтобы повернуть."),
@@ -463,7 +469,10 @@ input[type=number]{width:76px}
 .part.ext{cursor:default}.part.ext .t{opacity:.62}
 .basket-item .copies{display:flex;align-items:center;gap:3px;font-size:11.5px;color:var(--muted)}.basket-item .copies input{width:48px}
 .basket-foot{display:flex;justify-content:flex-end;padding:6px 4px 2px}
-.plate-head .view3d{margin-left:auto;padding:1px 8px;font-size:11px}
+.plate-head .view3d{margin-left:auto;height:24px;padding:0 9px;font-size:11.5px;gap:4px;flex:none}.plate-head .view3d .ic{width:14px;height:14px}
+.plate-nav{display:flex;align-items:center;gap:4px;pointer-events:auto}.plate-nav .ic{width:15px;height:15px}.plate-nav button.small{gap:5px}
+.summary .view3d-all{height:24px;padding:0 10px;font-size:12px;gap:5px}.summary .view3d-all .ic{width:14px;height:14px}
+.zoom-head .view3d-zoom{gap:5px}.zoom-head .view3d-zoom .ic{width:15px;height:15px}
 .orient-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 12px 8px;font-size:12px;color:var(--muted)}.orient-bar span{flex:1 1 200px}
 .part .tip{color:var(--accent)}
 button.small{height:26px;padding:0 10px;font-size:12px;flex:none}.part .t{min-width:0;flex:1}.part .n{overflow-wrap:anywhere;line-height:1.3}.part .m{color:var(--muted);font-size:11.5px;margin-top:2px}
@@ -572,7 +581,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
    </div>
    <div class="card viewer">
     <canvas id="view"></canvas><canvas id="viewGl" aria-hidden="true"></canvas>
-    <div class="hud"><div class="t"><b id="viewTitle"></b><span id="viewMeta" class="muted"></span></div><button id="resetView" class="icon" data-i18n-title="view.reset" title="Reset view" hidden><svg class="ic"><use href="#i-target"/></svg></button></div>
+    <div class="hud"><div class="t"><b id="viewTitle"></b><span id="viewMeta" class="muted"></span></div><span id="plateNav" class="plate-nav" hidden><button id="platePrev" class="icon" data-i18n-title="view.plate_prev" title="Previous plate">&#8249;</button><button id="plateShow" class="primary small"><svg class="ic"><use href="#i-cube"/></svg><span id="plateShowText"></span></button><button id="plateNext" class="icon" data-i18n-title="view.plate_next" title="Next plate">&#8250;</button></span><button id="resetView" class="icon" data-i18n-title="view.reset" title="Reset view" hidden><svg class="ic"><use href="#i-target"/></svg></button></div>
     <div id="viewHint" class="hint" data-i18n="view.hint" hidden>Drag to rotate · wheel to zoom · double-click to reset</div>
     <div id="viewEmpty" class="empty"><svg class="ic"><use href="#i-cube"/></svg><div data-i18n="view.empty">Select an STL part to see it on the printer bed</div></div>
    </div>
@@ -627,7 +636,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 </aside>
 
 <div id="drop" class="drop" hidden><div class="drop-card"><svg class="ic"><use href="#i-plus"/></svg><h2 data-i18n="drop.title">Drop to add to PlatePilot</h2><p data-i18n="drop.note">ZIP, STL, STEP, 3MF or a folder with them.</p></div></div>
-<div id="zoom" class="modal" hidden><div class="zoom" role="dialog" aria-modal="true"><div class="zoom-head"><h2 id="zoomTitle"></h2><span id="zoomMeta"></span><button id="zoomPrev" class="icon" data-i18n-title="plan.prev" title="Previous plate">&#8249;</button><button id="zoomNext" class="icon" data-i18n-title="plan.next" title="Next plate">&#8250;</button><button id="zoomClose" data-i18n="plan.close">Close</button></div><div class="zoom-body"><div id="zoomPlate"></div><ol id="zoomList" class="zoom-list"></ol></div></div></div>
+<div id="zoom" class="modal" hidden><div class="zoom" role="dialog" aria-modal="true"><div class="zoom-head"><h2 id="zoomTitle"></h2><span id="zoomMeta"></span><button id="zoom3d" class="primary small view3d-zoom" data-i18n-title="plan.view3d_tip" title="See this plate in 3D"><svg class="ic"><use href="#i-cube"/></svg><span data-i18n="plan.view3d">3D</span></button><button id="zoomPrev" class="icon" data-i18n-title="plan.prev" title="Previous plate">&#8249;</button><button id="zoomNext" class="icon" data-i18n-title="plan.next" title="Next plate">&#8250;</button><button id="zoomClose" data-i18n="plan.close">Close</button></div><div class="zoom-body"><div id="zoomPlate"></div><ol id="zoomList" class="zoom-list"></ol></div></div></div>
 <div id="modal" class="modal" hidden><div class="dialog"><h2 id="modalTitle" data-i18n="modal.confirm">Confirm</h2><div id="modalText" class="body"></div><div class="actions"><button id="modalNo" data-i18n="modal.cancel">Cancel</button><button id="modalYes" class="primary" data-i18n="modal.continue">Continue</button></div></div></div>
 
 <script>
@@ -660,15 +669,17 @@ function renderBasket(){const b=S.basket,on=inBasket();$('partsTitle').textConte
  updateActions()}
 // A plate in 3D arrives part by part; it is drawn as it fills. A new request (another plate, a part,
 // a new plan) leaves the parts still on their way unasked.
-function showPlate3d(pi){S.previewIndex=-1;S.previewMember=null;S.plateView={plate:pi,token:(S.plateView?.token||0)+1,chunks:[],facets:0};status(t('st.plate_loading',{name:t('plan.plate',{n:pi+1}),i:1,n:S.plan?.plates?.[pi]?.items?.length||1}));send('plate_view',{plate:pi,part:0})}
+function showPlate3d(pi,quiet){S.plateShown=pi;renderPlateNav();S.previewIndex=-1;S.previewMember=null;S.plateView={plate:pi,token:(S.plateView?.token||0)+1,chunks:[],facets:0,quiet:!!quiet};if(!quiet)status(t('st.plate_loading',{name:t('plan.plate',{n:pi+1}),i:1,n:S.plan?.plates?.[pi]?.items?.length||1}));send('plate_view',{plate:pi,part:0})}
 function plateChunk(msg){const v=S.plateView;if(!v||v.plate!==msg.plate||msg.part!==v.chunks.length)return;const bin=atob(msg.vertices),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);v.chunks.push(arr);v.facets+=msg.facets;
  const total=v.chunks.reduce((s,c)=>s+c.length,0),all=new Uint8Array(total);let o=0;for(const c of v.chunks){all.set(c,o);o+=c.length}
  const keep=S.mesh&&S.mesh.plateToken===v.token?{yaw:S.mesh.yaw,pitch:S.mesh.pitch,zoom:S.mesh.zoom}:null;
  drawMesh({name:msg.name,facets:v.facets,dims:[msg.bed[0],msg.bed[1],msg.top],floats:new Float32Array(all.buffer,0,all.length>>2),plate:true,bed:msg.bed});
  if(S.mesh){S.mesh.plateToken=v.token;if(keep){Object.assign(S.mesh,keep);renderMesh()}}
  $('viewMeta').textContent=t('view.plate_meta',{parts:plural('plan.parts',msg.count),bed:`${fmt(msg.bed[0])} × ${fmt(msg.bed[1])} ${t('unit.mm')}`});
- if(msg.part+1<msg.count){status(t('st.plate_loading',{name:msg.name,i:msg.part+2,n:msg.count}));const token=v.token;setTimeout(()=>{if(S.plateView&&S.plateView.token===token)send('plate_view',{plate:msg.plate,part:msg.part+1})},20)}
- else status(t('st.plate_shown',{name:msg.name}))}
+ if(msg.part+1<msg.count){if(!v.quiet)status(t('st.plate_loading',{name:msg.name,i:msg.part+2,n:msg.count}));const token=v.token;setTimeout(()=>{if(S.plateView&&S.plateView.token===token)send('plate_view',{plate:msg.plate,part:msg.part+1})},20)}
+ else if(!v.quiet)status(t('st.plate_shown',{name:msg.name}))}
+function renderPlateNav(){const n=S.plan&&S.plan.plates?S.plan.plates.length:0;$('plateNav').hidden=!n;if(!n)return;const i=Math.min(S.plateShown||0,n-1);$('plateShowText').textContent=t('view.plate_button',{n:i+1,total:n});$('platePrev').hidden=$('plateNext').hidden=n<2}
+function stepPlate(d){const n=S.plan&&S.plan.plates?S.plan.plates.length:0;if(n)showPlate3d(((S.plateShown||0)+d+n)%n)}
 function setView(view){if(S.view===view)return;S.view=view;invalidatePlan();renderBasket()}
 function updateActions(){const n=inBasket()?S.basket.total:selectedStl().length;$('plan').disabled=S.busy||!n;$('planSmart').disabled=S.busy||!n;$('sendPrepare').disabled=S.busy||!(S.plan&&S.plan.exportable);$('nativeArrange').disabled=S.busy||!n;$('toBasket').disabled=S.busy||!selectedStl().length;$('partCount').textContent=inBasket()?String(n):S.parts.length?`${n} / ${S.parts.length}`:'0'}
 function scheduleNativeTick(){if(S.nativeTick)return;S.nativeTick=setTimeout(()=>{S.nativeTick=null;send('native_arrange_tick')},700)}
@@ -770,8 +781,8 @@ tris.sort((p,q)=>p.z-q.z);for(const tr of tris){const k=tr.k,r=Math.min(255,ar*k
 ctx.fillStyle=dark?'rgba(255,255,255,.55)':'rgba(30,40,50,.55)';ctx.font='11px system-ui,sans-serif';ctx.textAlign='right';ctx.fillText(`${fmt(bx)} × ${fmt(by)} ${t('unit.mm')}`,w-12,h-12)}
 
 /* plan */
-function renderPlan(plan){S.plan=plan;S.plateView=null;updateActions();if(!$('zoom').hidden)closeZoom();if(!plan){$('zoomHint').hidden=true;$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);if(plan.count_note==='at_least')pills.push(`<span class="pill warn">${esc(t('plan.at_least',{plates:plural('plan.plates',plan.min_plates)}))}</span>`);if(plan.count_note==='at_most')pills.push(`<span class="pill warn">${esc(t('plan.at_most'))}</span>`);if(plan.smart===true)pills.unshift(`<span class="pill accent">${esc(t('plan.smart'))}</span>`);$('summary').innerHTML=pills.join('');
-$('plates').innerHTML=plan.plates.map((p,pi)=>`<div class="plate" data-plate="${pi}"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(plateMeta(p))}</span><button class="small view3d" data-view3d="${pi}" title="${esc(t('plan.view3d_tip'))}">${esc(t('plan.view3d'))}</button></div>${plateSvg(p,pi,false)}</div>`).join('');
+function renderPlan(plan){S.plan=plan;S.plateView=null;S.plateShown=0;renderPlateNav();updateActions();if(!$('zoom').hidden)closeZoom();if(!plan){$('zoomHint').hidden=true;$('summary').innerHTML='';$('plates').innerHTML='';return}const bx=plan.bed.x,by=plan.bed.y;const pills=[`<span class="pill accent">${esc(plural('plan.parts',plan.total))}</span>`,`<span class="pill accent">${esc(plural('plan.plates',plan.plates.length))}</span>`].concat((plan.problems||[]).map(p=>`<span class="pill warn">${esc(t('plan.not_fit',{name:p}))}</span>`)).concat((plan.too_tall||[]).map(p=>`<span class="pill warn">${esc(t('plan.too_tall',{name:p}))}</span>`));if(plan.exclusions)pills.push(`<span class="pill warn">${esc(t('plan.zones'))}</span>`);if(plan.count_note==='at_least')pills.push(`<span class="pill warn">${esc(t('plan.at_least',{plates:plural('plan.plates',plan.min_plates)}))}</span>`);if(plan.count_note==='at_most')pills.push(`<span class="pill warn">${esc(t('plan.at_most'))}</span>`);if(plan.smart===true)pills.unshift(`<span class="pill accent">${esc(t('plan.smart'))}</span>`);if(plan.plates.length)pills.push(`<button id="plan3d" class="primary small view3d-all" title="${esc(t('plan.view3d_all_tip'))}"><svg class="ic"><use href="#i-cube"/></svg>${esc(t('plan.view3d_all'))}</button>`);$('summary').innerHTML=pills.join('');if($('plan3d'))$('plan3d').onclick=()=>showPlate3d(S.plateShown||0);
+$('plates').innerHTML=plan.plates.map((p,pi)=>`<div class="plate" data-plate="${pi}"><div class="plate-head"><b>${esc(t('plan.plate',{n:pi+1}))}</b><span>${esc(plateMeta(p))}</span><button class="primary small view3d" data-view3d="${pi}" title="${esc(t('plan.view3d_tip'))}"><svg class="ic"><use href="#i-cube"/></svg>${esc(t('plan.view3d'))}</button></div>${plateSvg(p,pi,false)}</div>`).join('');
  document.querySelectorAll('[data-view3d]').forEach(b=>b.onclick=e=>{e.stopPropagation();showPlate3d(Number(b.dataset.view3d))});
  $('zoomHint').hidden=!plan.plates.length}
 function plateMeta(p){const used=p.items.reduce((s,it)=>s+it.w*it.h,0)/(S.plan.bed.x*S.plan.bed.y)*100;return t('plan.plate_meta',{parts:plural('plan.parts',p.items.length),fill:fmt(used,0)})}
@@ -816,6 +827,8 @@ $('plan').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').v
 $('planSmart').onclick=()=>{renderPlan(null);send('plan',{margin:Number($('margin').value)||0,plates:wantedPlates(),included:selectedStl().map(p=>p.member),smart:true,basket:inBasket()})};
 $('toBasket').onclick=()=>{const m=selectedStl().map(p=>p.member);if(m.length)send('basket_add',{members:m})};
 $('basketTab').onclick=()=>setView(inBasket()?'source':'basket');
+$('plateShow').onclick=()=>showPlate3d(S.plateShown||0);$('platePrev').onclick=()=>stepPlate(-1);$('plateNext').onclick=()=>stepPlate(1);
+$('zoom3d').onclick=()=>{const pi=S.zoom;closeZoom();if(pi!=null)showPlate3d(pi)};
 $('sendPrepare').onclick=()=>{if(!S.busy){status(t('st.building'));send('export_project')}};
 $('nativeArrange').onclick=()=>{if(!S.busy)send('native_arrange',{included:selectedStl().map(p=>p.member),basket:inBasket()})};
 $('modalYes').onclick=()=>finishAsk(true);$('modalNo').onclick=()=>finishAsk(false);
@@ -866,7 +879,9 @@ orca.onMessage(msg=>{const k=msg.type;
  else if(k==='import_next'){if(S.importWait){const w=S.importWait;S.importWait=null;w.res(msg)}}
  else if(k==='preview'){S.plateView=null;drawMesh(msg)}
  else if(k==='plate_part'){plateChunk(msg)}
- else if(k==='plan'){setProfile(msg.profile);renderPlan(msg);status(t(msg.exportable?'st.plan_ready':'st.plan_problems'),msg.exportable?'ok':'warn')}
+ else if(k==='plan'){setProfile(msg.profile);renderPlan(msg);status(t(msg.exportable?'st.plan_ready':'st.plan_problems'),msg.exportable?'ok':'warn');
+  // The first plate in 3D at once when it comes whole (no part needs simplifying, about 0.1 s a part).
+  const first=msg.plates&&msg.plates[0];if(first&&first.facets&&first.facets<=(msg.view_budget||0))setTimeout(()=>{if(S.plan===msg)showPlate3d(0,true)},30)}
  else if(k==='project_ready'){setBusy(false);status(msg.opened?t('st.project_opened'):t('st.project_saved',{path:msg.path,error:msg.error||''}),msg.opened?'ok':'warn')}
  else if(k==='native_arrange_started'){setBusy(true);status(t('st.arranging',{n:msg.count}));scheduleNativeTick()}
  else if(k==='native_arrange_progress'){if(msg.done){stopNativeTicks();setBusy(false);status(msg.message||t('st.arrange_done'),msg.ok?'ok':'error')}else scheduleNativeTick()}
@@ -1990,12 +2005,21 @@ def _turned_stl(raw, rows):
 
 
 BASKET_MAX_COPIES = 50
-MAX_PLATE_VIEW_FACETS = 160000   # a whole plate in the 3D view, shared among its parts
+MAX_PLATE_VIEW_FACETS = MAX_PREVIEW_FACETS   # a whole plate in the 3D view, as much as one part's preview
 
 
-def _plate_share(plate):
-    """How many facets each part of a plate may keep in the 3D view."""
-    return max(1500, MAX_PLATE_VIEW_FACETS // max(1, len(plate["items"])))
+def _plate_shares(counts, budget=None):
+    """How many facets each part of a plate keeps in the 3D view: parts smaller than an equal
+    share keep all of theirs, and what they leave goes to the bigger ones. A plate within the
+    budget is shown whole, with nothing simplified."""
+    budget = budget or MAX_PLATE_VIEW_FACETS
+    shares = [0] * len(counts)
+    left = budget
+    for done, i in enumerate(sorted(range(len(counts)), key=lambda k: counts[k] or budget)):
+        fair = max(1500, left // (len(counts) - done))
+        shares[i] = min(counts[i], fair) if counts[i] else fair
+        left = max(0, left - shares[i])
+    return shares
 
 
 def _placed_mesh(item, raw, share, simplified=None):
@@ -3441,7 +3465,9 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
         raw = ws["read"]([item["member"]])[item["member"]]
         if getattr(self, "_simplified", None) is None:
             self._simplified = {}
-        vertices, facets = _placed_mesh(item, raw, _plate_share(plate), self._simplified)
+        counts = {p.get("member"): int(p.get("facets") or 0) for p in ws["parts"]}
+        share = _plate_shares([counts.get(it["member"], 0) for it in items])[part]
+        vertices, facets = _placed_mesh(item, raw, share, self._simplified)
         size = plan["profile"]["size"]
         self.post_message({"type": "plate_part", "plate": index, "part": part, "count": len(items),
                            "name": _t("plan.plate", n=index + 1), "facets": facets,
@@ -3787,10 +3813,14 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 max_z = profile.get("height")
                 too_tall = [p["name"] for p in selected if max_z and p["dims"][2] > max_z]
                 exportable = bool(result["plates"]) and not result["problems"] and not too_tall
+                facet_counts = {p.get("member"): int(p.get("facets") or 0) for p in all_parts}
+                for plate in result["plates"]:
+                    plate["facets"] = sum(facet_counts.get(item.get("member"), 0) for item in plate["items"])
                 self.post_message({"type": "plan", "plates": result["plates"], "bed": profile["size"], "profile": profile,
                                    "total": result["total"], "problems": result["problems"], "too_tall": too_tall,
                                    "exclusions": profile.get("exclusions"), "exportable": exportable, "smart": result.get("smart", False),
-                                   "min_plates": result.get("min_plates"), "count_note": result.get("count_note")})
+                                   "min_plates": result.get("min_plates"), "count_note": result.get("count_note"),
+                                   "view_budget": MAX_PLATE_VIEW_FACETS})
                 self._last_plan = {"source": ws["key"], "plates": result["plates"], "profile": profile, "exportable": exportable,
                                    "basket": ws["basket"]}
             elif kind == "export_project":
