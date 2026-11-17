@@ -4,7 +4,7 @@
 
 PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin for people who download models as bundles: ZIP archives from Printables, Thingiverse or Patreon, or folders of STL files. It turns your download folders into a model library. You pick the parts you want, PlatePilot spreads them over as many plates as needed, and the project opens in **Prepare** with every plate ready.
 
-![PlatePilot in OrcaSlicer](docs/screenshot-light.png)
+![PlatePilot: a model folder, a part that lies better turned, and the 3D preview](docs/screenshot-light.png)
 
 ## Features
 
@@ -25,7 +25,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 - **One click to Prepare.** The project opens in the window you already have: one object per part, each on its own plate, with your current printer, process and filament profiles.
 - **Ten languages:** English, Russian, German, French, Spanish, Portuguese (Brazil), Italian, Turkish, Japanese and Simplified Chinese. Follows Orca's language, or pick one in the settings. Light and dark follow Orca, or pick one of seven themes in the settings: Parchment, Terracotta, Sage, Blueprint, Dusk, Workshop (dark), Night shift (dark).
 
-![Russian UI, dark theme, Orca auto-arrange mode](docs/screenshot-dark-ru.png)
+![Russian UI, Workshop theme: the basket with parts from two sources and its plates in 3D](docs/screenshot-dark-ru.png)
 
 ## Requirements
 
@@ -43,7 +43,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 
 **From GitHub:** download `platepilot-<version>-py3-none-any.whl` from [Releases](https://github.com/GNUGiminot/platepilot-orcaslicer/releases), then in OrcaSlicer choose **Plugins > Install local plugin** and select the file.
 
-**From Orca Cloud:** a Plugin Hub listing is planned.
+**From Orca Cloud:** find **PlatePilot** in the Plugin Hub and subscribe.
 
 ## Use
 
@@ -58,6 +58,10 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 7. If Prepare already has models, Orca asks what to do with the file. Choose **Open as project** to keep the plates. **Import geometry** adds the parts to your current project without the plates.
 
 Slice again before printing, and check Orca's warnings for parts outside a plate.
+
+### Downloads sorted for you: Model Download Sorter
+
+[Model Download Sorter](https://github.com/GNUGiminot/model-download-sorter) is a companion extension for Chrome and Yandex Browser. Models you download from MakerWorld, Printables, Thingiverse and other sites go to `Downloads/3D Models/<site>/<model>/` instead of the general downloads folder. Watch `3D Models` in PlatePilot, and every new download shows up as a source of its own, marked new, without the rest of your downloads around it.
 
 ## Permissions and privacy
 
@@ -128,7 +132,7 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 **С GitHub:** скачайте `platepilot-<версия>-py3-none-any.whl` в разделе [Releases](https://github.com/GNUGiminot/platepilot-orcaslicer/releases), затем в OrcaSlicer выберите **Plugins → Install local plugin** и укажите файл.
 
-**Из Orca Cloud:** листинг в Plugin Hub планируется.
+**Из Orca Cloud:** найдите **PlatePilot** в Plugin Hub и подпишитесь.
 
 ## Как пользоваться
 
@@ -143,6 +147,10 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 7. Если в «Подготовке» уже есть модели, Orca спросит, что сделать с файлом. Выберите **«Открыть как проект»**, чтобы сохранить столы. **«Импорт геометрии»** добавит детали в текущий проект без столов.
 
 Перед печатью нарежьте проект заново и проверьте предупреждения Orca о деталях за границами стола.
+
+### Загрузки по полочкам: Model Download Sorter
+
+[Сортировщик 3D-моделей (Model Download Sorter)](https://github.com/GNUGiminot/model-download-sorter) — расширение-компаньон для Chrome и Яндекс Браузера. Модели, скачанные с MakerWorld, Printables, Thingiverse и других сайтов, попадают не в общую папку загрузок, а в `Загрузки/3D Models/<сайт>/<модель>/`. Добавьте `3D Models` в PlatePilot, и каждая новая загрузка появится отдельным источником с пометкой «новое», без остальных файлов из загрузок вокруг.
 
 ## Доступ и приватность
 
