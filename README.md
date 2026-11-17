@@ -63,9 +63,13 @@ Slice again before printing, and check Orca's warnings for parts outside a plate
 
 [Model Download Sorter](https://github.com/GNUGiminot/model-download-sorter) is a companion extension for Chrome and Yandex Browser. Models you download from MakerWorld, Printables, Thingiverse and other sites go to `Downloads/3D Models/<site>/<model>/` instead of the general downloads folder. Watch `3D Models` in PlatePilot, and every new download shows up as a source of its own, marked new, without the rest of your downloads around it.
 
+## Support the author
+
+PlatePilot is free. If it saves you time, the **Support** button at the top (a printed heart) opens the author's Telegram, [t.me/GIMINOT](https://t.me/GIMINOT), where you can send Telegram Stars: in the profile choose **Gift → Stars**. Ko-fi is coming later.
+
 ## Permissions and privacy
 
-PlatePilot works only with local files. It does not use the network.
+PlatePilot works only with local files. It does not use the network. The **Support** button only asks your system to open its link in the browser.
 
 - OrcaSlicer asks before a plugin reads a file outside the plugin's own data folder, separately for every path. PlatePilot does not bypass these prompts, and it is built so that there are few of them:
   - Checking a watched folder only lists file names and sizes. Orca asks once per folder, the first time.
@@ -152,9 +156,13 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 [Сортировщик 3D-моделей (Model Download Sorter)](https://github.com/GNUGiminot/model-download-sorter) — расширение-компаньон для Chrome и Яндекс Браузера. Модели, скачанные с MakerWorld, Printables, Thingiverse и других сайтов, попадают не в общую папку загрузок, а в `Загрузки/3D Models/<сайт>/<модель>/`. Добавьте `3D Models` в PlatePilot, и каждая новая загрузка появится отдельным источником с пометкой «новое», без остальных файлов из загрузок вокруг.
 
+## Поддержать автора
+
+PlatePilot бесплатный. Если он экономит вам время, кнопка **«Поддержать»** вверху (напечатанное сердце) откроет Telegram автора, [t.me/GIMINOT](https://t.me/GIMINOT), там можно отправить звёзды Telegram: в профиле выберите **«Подарить» → «Звёзды»**. Ko-fi появится позже.
+
 ## Доступ и приватность
 
-PlatePilot работает только с локальными файлами и не обращается к сети. Orca спрашивает разрешение, прежде чем плагин прочитает файл вне своей папки данных, — отдельно для каждого пути. PlatePilot эти запросы не обходит, но устроен так, чтобы их было мало:
+PlatePilot работает только с локальными файлами и не обращается к сети. Кнопка «Поддержать» только просит систему открыть ссылку в браузере. Orca спрашивает разрешение, прежде чем плагин прочитает файл вне своей папки данных, — отдельно для каждого пути. PlatePilot эти запросы не обходит, но устроен так, чтобы их было мало:
 
 - Проверка отслеживаемой папки только перечисляет имена и размеры файлов — Orca спросит один раз на папку.
 - Архив читается, только когда вы его открываете, — один запрос на архив.

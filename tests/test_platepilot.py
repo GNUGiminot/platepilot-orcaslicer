@@ -1411,3 +1411,40 @@ class DropIntoPlatePilot(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Support(unittest.TestCase):
+    """The Support button opens the author's Telegram in the browser, or names it when it cannot."""
+
+    def setUp(self):
+        self.storage = tempfile.TemporaryDirectory()
+        self.page = FakePage(self.storage.name)
+        self.saved = pp.webbrowser.open_new_tab
+
+    def tearDown(self):
+        pp.webbrowser.open_new_tab = self.saved
+        self.storage.cleanup()
+
+    def test_opens_the_link(self):
+        opened = []
+        pp.webbrowser.open_new_tab = lambda url: opened.append(url) or True
+        self.page.send({"type": "open_support"})
+        self.assertEqual(opened, ["https://t.me/GIMINOT"])
+        self.assertEqual(self.page.messages, [])
+
+    def test_names_the_link_when_the_browser_does_not_open(self):
+        def fail(url):
+            raise OSError("no browser")
+        pp.webbrowser.open_new_tab = fail
+        self.page.on_message({"type": "open_support"})
+        self.assertEqual(self.page.messages[-1]["type"], "error")
+        self.assertIn("https://t.me/GIMINOT", self.page.messages[-1]["message"])
+
+    def test_the_button_is_on_the_page_in_every_language(self):
+        self.assertIn('id="support"', pp.PAGE)
+        self.assertIn('<symbol id="i-support"', pp.PAGE)
+        for language in pp.LANGUAGES:
+            pp._set_language(language)
+            self.assertTrue(pp._t("btn.support"))
+            self.assertNotEqual(pp._t("btn.support"), "btn.support")
+        pp._set_language("en")

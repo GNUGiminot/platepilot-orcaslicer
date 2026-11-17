@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2
+
+- **Support button.** A **Support** button with a printed heart sits next to Settings. It opens the author's Telegram, t.me/GIMINOT, in your browser, where you can send Telegram Stars (Gift → Stars in the profile). If the browser does not open, PlatePilot shows the link.
+- English: "More archives whose names don't look like models: 1" instead of "1 more archives…".
+
 ## 0.10.1
 
 - **Models downloaded straight into a watched folder show one by one.** STL, STEP and 3MF files lying in the watched folder itself (not in a subfolder) were listed together as one source named after the folder, so a newly downloaded model only changed that source's count and was easy to miss. Now each such file is a source of its own, marked **new** and listed by its download time. Subfolders with models are still one source each. After the update the files already there show as new once.

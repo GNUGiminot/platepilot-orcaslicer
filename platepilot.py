@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.10.1"
+# version = "0.10.2"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import time
+import webbrowser
 from xml.sax.saxutils import escape, quoteattr
 import xml.etree.ElementTree as ElementTree
 import zipfile
@@ -28,7 +29,8 @@ import zipfile
 import orca
 
 
-VERSION = "0.10.1"
+VERSION = "0.10.2"
+SUPPORT_URL = "https://t.me/GIMINOT"   # the author's Telegram: Support opens it in the browser
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -85,6 +87,9 @@ STRINGS = {
     "btn.refresh": ("Refresh", "Обновить"),
     "btn.folders": ("Settings", "Настройки"),
     "btn.add_files": ("Add files", "Добавить файлы"),
+    "btn.support": ("Support", "Поддержать"),
+    "btn.support_tip": ("Support PlatePilot with Telegram Stars: opens t.me/GIMINOT in your browser", "Поддержать PlatePilot звёздами Telegram: откроется t.me/GIMINOT в браузере"),
+    "err.support_open": ("The browser did not open. The author's Telegram: {url}", "Браузер не открылся. Telegram автора: {url}"),
     "btn.add_files_tip": ("Add ZIP, STL, STEP or 3MF files. They are copied into PlatePilot, so Orca does not ask for permission.", "Добавить файлы ZIP, STL, STEP или 3MF. Они копируются в PlatePilot, поэтому Orca не спрашивает разрешения."),
     "lib.title": ("Library", "Библиотека"),
     "lib.search": ("Search by name", "Поиск по названию"),
@@ -194,7 +199,7 @@ STRINGS = {
     "lib.added": ("Added", "Добавленные"),
     "lib.all_folders": ("All folders", "Все папки"),
     "lib.folder_tip": ("Show the sources of one folder only", "Показать источники только из одной папки"),
-    "lib.other_show": ("{n} more archives whose names don't look like models", "Ещё архивов, не похожих на модели по названию: {n}"),
+    "lib.other_show": ("More archives whose names don't look like models: {n}", "Ещё архивов, не похожих на модели по названию: {n}"),
     "lib.other_hide": ("Hide the archives whose names don't look like models", "Скрыть архивы, не похожие на модели"),
     "lib.other_note": ("PlatePilot judges by the name, because looking inside every archive would make Orca ask about each one. Open an archive to check it: with models it moves up, without them it disappears. Search looks through these too.",
                        "PlatePilot судит по названию: чтобы заглянуть в каждый архив, Orca спрашивала бы разрешение на каждый. Откройте архив, чтобы проверить: с моделями он поднимется в список, без них исчезнет. Поиск находит и эти архивы."),
@@ -272,7 +277,7 @@ STRINGS = {
     "folders.sources": ("{n} source|{n} sources", "{n} источник|{n} источника|{n} источников"),
     "folders.stats": ("{sources} · checked {time}", "{sources} · проверено {time}"),
     "folders.new": ("{n} new", "новых: {n}"),
-    "folders.other": ("{n} archives that don't look like models", "не похожих на модели архивов: {n}"),
+    "folders.other": ("archives that don't look like models: {n}", "не похожих на модели архивов: {n}"),
     "folders.empty": ("{n} without models hidden", "без моделей скрыто: {n}"),
     "folders.never": ("Not checked yet", "Ещё не проверялась"),
     "folders.missing": ("Folder not found", "Папка не найдена"),
@@ -379,6 +384,9 @@ _LANG = "en"
 # here shows in English. Names of Orca's own tabs and buttons follow Orca's translations.
 EXTRA_STRINGS = {
     "de": {
+        "btn.support": "Unterstützen",
+        "btn.support_tip": "PlatePilot mit Telegram Stars unterstützen: öffnet t.me/GIMINOT im Browser",
+        "err.support_open": "Der Browser hat sich nicht geöffnet. Telegram des Autors: {url}",
         "err.3mf_transform": "die Lage eines Objekts in der Datei ist beschädigt",
         "err.3mf_nesting": "Objekte sind zu tief verschachtelt",
         "app.tagline": "Modellbibliothek und Plattenplaner",
@@ -646,6 +654,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "eine STL hat sich nach der Berechnung geändert; berechnen Sie die Anordnung erneut"
     },
     "fr": {
+        "btn.support": "Soutenir",
+        "btn.support_tip": "Soutenir PlatePilot avec des étoiles Telegram : ouvre t.me/GIMINOT dans le navigateur",
+        "err.support_open": "Le navigateur ne s’est pas ouvert. Telegram de l’auteur : {url}",
         "err.3mf_transform": "la position d’un objet dans le fichier est corrompue",
         "err.3mf_nesting": "les objets sont imbriqués trop profondément",
         "app.tagline": "Bibliothèque de modèles et planificateur de plaques",
@@ -913,6 +924,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "un STL a changé après le calcul ; recalculez la disposition"
     },
     "es": {
+        "btn.support": "Apoyar",
+        "btn.support_tip": "Apoya PlatePilot con estrellas de Telegram: abre t.me/GIMINOT en el navegador",
+        "err.support_open": "El navegador no se abrió. Telegram del autor: {url}",
         "err.3mf_transform": "la posición de un objeto en el archivo está dañada",
         "err.3mf_nesting": "los objetos están anidados demasiado",
         "app.tagline": "Biblioteca de modelos y planificador de placas",
@@ -1180,6 +1194,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "un STL cambió después del cálculo; vuelve a calcular la distribución"
     },
     "pt_BR": {
+        "btn.support": "Apoiar",
+        "btn.support_tip": "Apoie o PlatePilot com estrelas do Telegram: abre t.me/GIMINOT no navegador",
+        "err.support_open": "O navegador não abriu. Telegram do autor: {url}",
         "err.3mf_transform": "a posição de um objeto no arquivo está corrompida",
         "err.3mf_nesting": "os objetos estão aninhados demais",
         "app.tagline": "Biblioteca de modelos e planejador de placas",
@@ -1447,6 +1464,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "um STL mudou depois do cálculo; calcule o layout de novo"
     },
     "it": {
+        "btn.support": "Sostieni",
+        "btn.support_tip": "Sostieni PlatePilot con le stelle di Telegram: apre t.me/GIMINOT nel browser",
+        "err.support_open": "Il browser non si è aperto. Telegram dell’autore: {url}",
         "err.3mf_transform": "la posizione di un oggetto nel file è danneggiata",
         "err.3mf_nesting": "gli oggetti sono annidati troppo in profondità",
         "app.tagline": "Libreria di modelli e pianificatore di piastre",
@@ -1714,6 +1734,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "uno STL è cambiato dopo il calcolo; calcola di nuovo la disposizione"
     },
     "tr": {
+        "btn.support": "Destekle",
+        "btn.support_tip": "PlatePilot'u Telegram Yıldızları ile destekle: tarayıcıda t.me/GIMINOT açılır",
+        "err.support_open": "Tarayıcı açılmadı. Yazarın Telegram'ı: {url}",
         "err.3mf_transform": "dosyadaki bir nesnenin konumu bozuk",
         "err.3mf_nesting": "nesneler çok derin iç içe",
         "app.tagline": "Model kütüphanesi ve plaka planlayıcı",
@@ -1981,6 +2004,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "hesaplamadan sonra bir STL değişti; yerleşimi yeniden hesaplayın"
     },
     "ja": {
+        "btn.support": "応援する",
+        "btn.support_tip": "Telegram スターで PlatePilot を応援：ブラウザーで t.me/GIMINOT を開きます",
+        "err.support_open": "ブラウザーが開きませんでした。作者の Telegram：{url}",
         "err.3mf_transform": "ファイル内のオブジェクトの位置情報が壊れています",
         "err.3mf_nesting": "オブジェクトの入れ子が深すぎます",
         "app.tagline": "モデルライブラリとプレート計画",
@@ -2248,6 +2274,9 @@ EXTRA_STRINGS = {
         "err.stl_changed": "計算後に STL が変わりました。配置を計算し直してください"
     },
     "zh_CN": {
+        "btn.support": "支持作者",
+        "btn.support_tip": "用 Telegram 星星支持 PlatePilot：在浏览器中打开 t.me/GIMINOT",
+        "err.support_open": "浏览器没有打开。作者的 Telegram：{url}",
         "err.3mf_transform": "文件中某个对象的位置数据已损坏",
         "err.3mf_nesting": "对象嵌套层级过深",
         "app.tagline": "模型库与多盘排布",
@@ -2586,6 +2615,7 @@ PAGE = r"""<!doctype html>
 :is([data-orca-theme=dark]:not([data-pp-mode=light]),[data-pp-mode=dark]){--raised:color-mix(in srgb,#fff 5%,var(--bg));--surface:color-mix(in srgb,#fff 3%,var(--bg));--surface-2:color-mix(in srgb,#fff 7%,var(--bg));--warn:#f2ab3c;--danger:#ff7a7a;--shadow:0 1px 2px rgb(0 0 0/.35),0 14px 34px -18px rgb(0 0 0/.75)}
 *{box-sizing:border-box}[hidden]{display:none!important}html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);display:grid;grid-template-rows:auto 3px minmax(0,1fr) auto;overflow:hidden}
+svg.ic-support{width:20px;height:20px;flex:none;margin:-2px 0}
 svg.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 /* Orca injects default button/input styles after this sheet (orca-plugin-defaults), so the base
    rules use "body …" to outrank them; otherwise buttons get Orca's white text and accent fill. */
@@ -2717,6 +2747,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
  <symbol id="i-logo" viewBox="0 0 320 320"><defs><pattern id="logo-tex" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="3" cy="4" r="1.3" fill="#000" opacity=".16"/><circle cx="10" cy="9" r="1.1" fill="#fff" opacity=".28"/><circle cx="6" cy="12" r=".9" fill="#000" opacity=".12"/></pattern><linearGradient id="logo-sheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient></defs><rect width="320" height="320" rx="72" fill="#1F1C19"/><rect x="44" y="44" width="232" height="232" rx="28" fill="#C8A266"/><rect x="44" y="44" width="232" height="232" rx="28" fill="url(#logo-sheen)"/><rect x="44" y="44" width="232" height="232" rx="28" fill="url(#logo-tex)"/><rect x="45.5" y="45.5" width="229" height="229" rx="27" fill="none" stroke="#fff" stroke-width="3" opacity=".28"/><g fill="#000" opacity=".24"><circle cx="108" cy="113" r="44"/><rect x="162" y="69" width="94" height="120" rx="16"/><rect x="64" y="167" width="88" height="94" rx="16"/><rect x="162" y="199" width="94" height="62" rx="16"/></g><circle cx="108" cy="108" r="44" fill="#F2EBDC"/><circle cx="108" cy="108" r="14" fill="#C8A266"/><rect x="162" y="64" width="94" height="120" rx="16" fill="#F2EBDC"/><rect x="199" y="84" width="20" height="80" rx="10" fill="#C8A266"/><rect x="64" y="162" width="88" height="94" rx="16" fill="#F2EBDC"/><rect x="84" y="182" width="48" height="12" rx="6" fill="#C8A266"/><rect x="84" y="206" width="48" height="12" rx="6" fill="#C8A266"/><rect x="162" y="194" width="94" height="62" rx="16" fill="#1F1C19"/><circle cx="209" cy="225" r="12" fill="#C8A266"/></symbol>
+ <symbol id="i-support" viewBox="0 0 24 24"><defs><clipPath id="support-heart"><path d="M12 22s-8-4.8-8-10.3A4.3 4.3 0 0 1 12 9.3a4.3 4.3 0 0 1 8 2.4C20 17.2 12 22 12 22z"/></clipPath></defs><path d="M9.6 1.5h4.8v2.3l-1.2 1.8h-2.4L9.6 3.8z" fill="currentColor"/><path d="M11.4 5.6h1.2l-.6 1.4z" fill="currentColor"/><g clip-path="url(#support-heart)"><rect x="3" y="8" width="18" height="15" fill="#C8A266"/><path d="M3 11.2h18M3 13.6h18M3 16h18M3 18.4h18M3 20.8h18" stroke="#8E6A31" stroke-width=".7" opacity=".75"/><rect x="3" y="8" width="18" height="3.2" fill="#F2EBDC"/></g><path d="M12 22s-8-4.8-8-10.3A4.3 4.3 0 0 1 12 9.3a4.3 4.3 0 0 1 8 2.4C20 17.2 12 22 12 22z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4"/></symbol>
  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2h8.8A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
  <symbol id="i-zip" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M12 3v2.5m0 2v2m0 2v2"/><rect x="10" y="14" width="4" height="4.5" rx="1"/></symbol>
@@ -2737,7 +2768,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 <header class="appbar">
  <div class="brand"><div class="brand-mark"><svg><use href="#i-logo"/></svg></div><div><h1>PlatePilot</h1><small data-i18n="app.tagline">Model library and plate planner</small></div></div>
  <div id="printer" class="printer"><span class="name muted" data-i18n="app.loading_profile">Loading the printer profile…</span></div>
- <div class="appbar-actions"><button id="scan" class="primary"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="btn.refresh">Refresh</span></button><button id="addFiles" data-i18n-title="btn.add_files_tip" title="Add ZIP, STL, STEP or 3MF files"><svg class="ic"><use href="#i-file-plus"/></svg><span data-i18n="btn.add_files">Add files</span></button><input id="filePick" type="file" multiple accept=".zip,.stl,.step,.stp,.3mf" hidden><button id="openSettings"><svg class="ic"><use href="#i-sliders"/></svg><span data-i18n="btn.folders">Settings</span></button></div>
+ <div class="appbar-actions"><button id="scan" class="primary"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="btn.refresh">Refresh</span></button><button id="addFiles" data-i18n-title="btn.add_files_tip" title="Add ZIP, STL, STEP or 3MF files"><svg class="ic"><use href="#i-file-plus"/></svg><span data-i18n="btn.add_files">Add files</span></button><input id="filePick" type="file" multiple accept=".zip,.stl,.step,.stp,.3mf" hidden><button id="support" data-i18n-title="btn.support_tip" title="Support PlatePilot with Telegram Stars"><svg class="ic-support" viewBox="0 0 24 24"><use href="#i-support"/></svg><span data-i18n="btn.support">Support</span></button><button id="openSettings"><svg class="ic"><use href="#i-sliders"/></svg><span data-i18n="btn.folders">Settings</span></button></div>
 </header>
 <div class="progress"></div>
 
@@ -2993,7 +3024,7 @@ function closeZoom(){$('zoom').hidden=true;S.zoom=null}
 function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('platesField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('orientField').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
 
 /* wiring */
-$('openSettings').onclick=()=>openDrawer(true);$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
+$('openSettings').onclick=()=>openDrawer(true);$('support').onclick=()=>send('open_support');$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('modal').hidden)finishAsk(false);else openDrawer(false)}});
 $('pickFolder').onclick=()=>{if(S.busy)return;S.scanning=true;status(t('st.opening_picker'));send('pick_folder',{initial:$('folder').value.trim()||(S.config.folders||[])[0]||''})};
 $('addFolder').onclick=()=>{const path=$('folder').value.trim();if(path&&!S.busy){S.scanning=true;setBusy(true);send('request_folder_add',{path})}};$('folder').onkeydown=e=>{if(e.key==='Enter')$('addFolder').click()};
@@ -5892,6 +5923,13 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 self._save(config)
                 if getattr(self, "_rows", None) is not None:
                     self._post_rows(config)
+            elif kind == "open_support":
+                try:
+                    opened = webbrowser.open_new_tab(SUPPORT_URL)
+                except Exception:
+                    opened = False
+                if not opened:
+                    self.post_message({"type": "error", "message": _t("err.support_open", url=SUPPORT_URL)})
             elif kind == "pick_folder":
                 initial = str(data.get("initial", "") or "")
                 try:
