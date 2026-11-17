@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.10.0"
+# version = "0.10.1"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -28,7 +28,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -2889,13 +2889,13 @@ function saveUiSettings(){S.config.orca_orient=$('orcaOrient').checked;S.config.
 function setProfile(p){S.profile=p||null;if(!p||p.error){$('printer').innerHTML=`<span class="pill warn">${esc(t('printer.unreadable'))}</span><span class="name muted">${esc(p&&p.error||'')}</span>`;return}const s=p.size||{};$('printer').innerHTML=`<span class="name" title="${esc(p.name)}">${esc(p.name||'—')}</span><span class="spec"><span class="pill accent">${fmt(s.x)} × ${fmt(s.y)} ${esc(t('unit.mm'))}</span><span class="pill">Z ${fmt(p.height)}</span>${p.exclusions?`<span class="pill warn" title="${esc(t('printer.zones_tip'))}">${esc(t('printer.zones'))}</span>`:''}</span>`;if(S.mesh)renderMesh()}
 
 /* library */
-function kindClass(kind,added){return added?'k-added':kind==='folder'?'k-folder':'k-zip'}
-function sourceRow(a){const badges=a.type_counts?Object.entries(a.type_counts).map(([k,v])=>`<span class="pill">${esc(k)} ${v}</span>`).join(''):`<span class="pill">${esc(t('src.unopened'))}</span>`;return `<div class="source ${S.selected===a.path?'on':''} ${a.likely===false?'other':''}" data-path="${esc(a.path)}" data-kind="${esc(a.kind)}"><div class="glyph ${kindClass(a.kind,a.added)}">${icon(a.kind==='folder'?'models':'zip')}</div><div class="t"><div class="n">${esc(a.name)}</div><div class="m">${a.new?`<span class="pill accent">${esc(t('src.new'))}</span>`:''}${a.added?`<span class="pill">${esc(t('src.added'))}</span>`:''}${badges}<span class="pill">${esc(a.size)}</span>${a.warning?`<span class="pill warn">${esc(a.warning)}</span>`:''}</div></div></div>`}
+function kindClass(kind,added){return added?'k-added':kind==='zip'?'k-zip':'k-folder'}
+function sourceRow(a){const badges=a.type_counts?Object.entries(a.type_counts).map(([k,v])=>`<span class="pill">${esc(k)} ${v}</span>`).join(''):`<span class="pill">${esc(t('src.unopened'))}</span>`;return `<div class="source ${S.selected===a.path?'on':''} ${a.likely===false?'other':''}" data-path="${esc(a.path)}" data-kind="${esc(a.kind)}"><div class="glyph ${kindClass(a.kind,a.added)}">${icon(a.kind==='zip'?'zip':'models')}</div><div class="t"><div class="n">${esc(a.name)}</div><div class="m">${a.new?`<span class="pill accent">${esc(t('src.new'))}</span>`:''}${a.added?`<span class="pill">${esc(t('src.added'))}</span>`:''}${badges}<span class="pill">${esc(a.size)}</span>${a.warning?`<span class="pill warn">${esc(a.warning)}</span>`:''}</div></div></div>`}
 // The folder switch: every watched folder and PlatePilot's own folder of added files, when there are two or more.
 function renderRoots(){const roots=(S.folders||[]).filter(f=>f.path),sel=$('rootFilter');if(S.root&&!roots.some(f=>f.path===S.root))S.root='';
  $('rootBar').hidden=roots.length<2;if(roots.length<2)return;const n=p=>S.archives.filter(x=>x.root===p&&x.likely!==false).length,base=p=>p.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||p;
  sel.innerHTML=`<option value="">${esc(t('lib.all_folders'))} (${S.archives.filter(x=>x.likely!==false).length})</option>`+roots.map(f=>`<option value="${esc(f.path)}" title="${esc(f.path)}"${f.path===S.root?' selected':''}>${esc(f.origin==='added'?t('folders.added'):base(f.path))} (${n(f.path)})</option>`).join('');sel.value=S.root||''}
-function renderArchives(){const q=$('filter').value.trim().toLowerCase();renderRoots();const match=x=>(!S.root||x.root===S.root)&&(S.kind==='all'||(S.kind==='new'?x.new:S.kind==='added'?x.added:x.kind===S.kind));const found=S.archives.filter(x=>x.name.toLowerCase().includes(q)&&match(x));
+function renderArchives(){const q=$('filter').value.trim().toLowerCase();renderRoots();const match=x=>(!S.root||x.root===S.root)&&(S.kind==='all'||(S.kind==='new'?x.new:S.kind==='added'?x.added:x.kind===S.kind||(S.kind==='folder'&&x.kind==='file')));const found=S.archives.filter(x=>x.name.toLowerCase().includes(q)&&match(x));
  /* a search looks through everything; otherwise archives whose names don't look like models wait in a collapsed group */
  const main=q?found:found.filter(x=>x.likely!==false),rest=q?[]:found.filter(x=>x.likely===false);const fresh=S.archives.filter(x=>x.new).length;
  $('libCount').textContent=S.archives.filter(x=>x.likely!==false).length;$('newCount').textContent=fresh||'';$('addedChip').hidden=!S.archives.some(x=>x.added)&&S.kind!=='added';$('markSeen').hidden=!fresh||S.kind!=='new';
@@ -2906,7 +2906,7 @@ function renderArchives(){const q=$('filter').value.trim().toLowerCase();renderR
  $('archives').innerHTML=html;if($('toggleOther'))$('toggleOther').onclick=()=>{S.showOther=!S.showOther;renderArchives()};
  document.querySelectorAll('.source').forEach(el=>el.onclick=()=>{if(S.busy)return;setBusy(true);status(t('st.opening'));send('open_model',{path:el.dataset.path,kind:el.dataset.kind})})}
 function clearSource(note){S.selected=null;S.parts=[];S.plan=null;S.mesh=null;S.previewIndex=-1;renderSourceHead();renderParts(note);renderPlan(null);drawEmptyView()}
-function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;const action=S.selectedAdded?`<button id="deleteSelected" class="ghost" title="${esc(t('src.delete_tip'))}">${icon('x')}${esc(t('src.delete'))}</button>`:`<button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('sourceHead').innerHTML=`<div class="glyph ${kindClass(S.selectedKind,S.selectedAdded)}">${icon(S.selectedKind==='folder'?'models':'zip')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div>${action}`;if(S.selectedAdded)$('deleteSelected').onclick=()=>ask(t('delete.title'),t('delete.body',{name:S.selectedName}),'delete',{path:S.selected},t('src.delete'));else $('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
+function renderSourceHead(){if(!S.selected){$('sourceHead').innerHTML=`<div class="glyph">${icon('cube')}</div><div class="grow"><h2>${esc(t('src.choose'))}</h2><div class="sub">${esc(t('src.choose_note'))}</div></div>`;return}const stl=S.parts.filter(p=>p.filetype==='stl').length;const action=S.selectedAdded?`<button id="deleteSelected" class="ghost" title="${esc(t('src.delete_tip'))}">${icon('x')}${esc(t('src.delete'))}</button>`:`<button id="hideSelected" class="ghost" title="${esc(t('src.hide_tip'))}">${icon('eye-off')}${esc(t('src.hide'))}</button>`;$('sourceHead').innerHTML=`<div class="glyph ${kindClass(S.selectedKind,S.selectedAdded)}">${icon(S.selectedKind==='zip'?'zip':'models')}</div><div class="grow"><h2>${esc(S.selectedName)}</h2><div class="sub">${esc(t('src.summary',{n:S.parts.length,stl,path:S.selected}))}</div></div>${action}`;if(S.selectedAdded)$('deleteSelected').onclick=()=>ask(t('delete.title'),t('delete.body',{name:S.selectedName}),'delete',{path:S.selected},t('src.delete'));else $('hideSelected').onclick=()=>send('hide_source',{path:S.selected})}
 function partMeta(p){if(Array.isArray(p.dims)&&p.dims.length===3&&p.filetype==='stl')return esc(t('parts.meta',{dims:p.dims.map(v=>fmt(v)).join(' × '),facets:Number(p.facets||0).toLocaleString(locale())}));return esc(t('parts.catalog_only',{type:(p.filetype||'model').toUpperCase()}))}
 function renderParts(note){if(!S.parts.length){$('parts').innerHTML=`<div class="empty">${icon('cube')}<div>${esc(note||(S.selected?t('parts.no_files'):t('parts.placeholder')))}</div></div>`;updateActions();return}$('parts').innerHTML=S.parts.map((p,i)=>{const usable=meshPart(p);return `<div class="part ${usable?'':p.open_in_orca?'ext':'off'} ${S.previewIndex===i?'on':''}" data-index="${i}"><input class="check" type="checkbox" data-check="${i}" ${p.included?'checked':''} ${usable?'':'disabled'}><div class="t"><div class="n">${esc(p.name)}</div><div class="m">${partMeta(p)}${p.warning?` · <span class="warn">${esc(p.warning)}</span>`:''}${p.turned!=null?` · <span class="tip">${esc(t('orient.turned',{pct:p.turned}))}</span>`:p.advice?` · <span class="tip">${esc(t('orient.advice',{pct:p.advice.pct}))}</span>`:''}</div></div>${p.advice&&usable?`<button class="small" data-turn="${i}" data-on="${p.turned==null?1:0}">${esc(t(p.turned==null?'btn.turn':'btn.unturn'))}</button>`:''}${p.open_in_orca?`<button class="small" data-orca="${i}">${esc(t('btn.open_in_orca'))}</button>`:''}</div>`}).join('');
  document.querySelectorAll('[data-orca]').forEach(el=>el.onclick=e=>{e.stopPropagation();if(!S.busy)send('open_in_orca',{index:Number(el.dataset.orca)})});
@@ -3683,14 +3683,16 @@ def _likely_models(row):
     return _guess_archive(row["name"]) == "models"
 
 
-def _scan_folder(folder, recursive=True):
+def _scan_folder(folder, recursive=True, split_root=False):
     """Rows for the ZIP archives and model folders under folder, found by their names only.
 
     Nothing is opened here. Orca asks before a plugin reads a file, so a scan that opened every
     ZIP asked about archives that turned out to hold no models. Listing the tree takes a single
     os.walk(), which Orca grants once per watched folder and which covers every subfolder while
     it runs, so the whole walk has to happen within one call. Subfolders whose path Orca cannot
-    check (see _orca_can_read) are not entered. Returns (rows, truncated, skipped folders).
+    check (see _orca_can_read) are not entered. With split_root, every model file lying in folder
+    itself is a source of its own (kind "file"): a downloads folder collects unrelated models
+    there. Returns (rows, truncated, skipped folders).
     """
     rows = []
     directories = 0
@@ -3721,6 +3723,23 @@ def _scan_folder(folder, recursive=True):
             if len(rows) >= MAX_ARCHIVES:
                 return rows, True, skipped
         model_files = sorted([n for n in files if _model_type_for_name(n)], key=str.casefold)
+        if split_root and current == folder:
+            for name in model_files:
+                path = os.path.join(current, name)
+                try:
+                    stat = os.stat(path)
+                except OSError:
+                    continue
+                row = {"kind": "file", "name": name, "path": os.path.realpath(path), "root": folder,
+                       "fingerprint": f"{stat.st_size}:{getattr(stat, 'st_mtime_ns', int(stat.st_mtime * 1e9))}",
+                       "size": _fmt_size(stat.st_size), "count": 1, "type_counts": _type_counts([name]), "files": [name],
+                       "time": _freshness(stat)}
+                if not _orca_can_read(path):
+                    row["warning"] = _t("warn.unsafe_name")
+                rows.append(row)
+                if len(rows) >= MAX_ARCHIVES:
+                    return rows, True, skipped
+            model_files = []
         if model_files and _safe_archive_path(current, folder):
             try:
                 stats = [os.stat(os.path.join(current, name)) for name in model_files]
@@ -3806,14 +3825,15 @@ def _unique_path(folder, name):
     return candidate
 
 
-def _snapshot_folder(source, names, cache_root, keep=()):
+def _snapshot_folder(source, names, cache_root, keep=(), label=""):
     """Copy the STL files of a watched model folder into the plugin's own folder and return the copy.
 
     Reading the files one by one makes Orca ask about every file. shutil.copytree() is a single
     operation that Orca asks about once per folder, and the copy inside the plugin's data folder
     can then be read freely. The copy is kept while its files match the folder's.
     """
-    target = os.path.join(cache_root, hashlib.sha1(_folder_key(source).encode("utf-8")).hexdigest()[:12])
+    key = _folder_key(source) + ("|" + label if label else "")
+    target = os.path.join(cache_root, hashlib.sha1(key.encode("utf-8")).hexdigest()[:12])
     manifest_path = os.path.join(target, "manifest.json")
     wanted = {}
     for name in names:
@@ -5171,7 +5191,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 if not _orca_can_read(folder):
                     summaries[key] = {"checked": time.time(), "unreadable": True}
                     continue
-                found, truncated, skipped = _scan_folder(folder, config.get("recursive", True) or origin == "added")
+                found, truncated, skipped = _scan_folder(folder, config.get("recursive", True) or origin == "added",
+                                                         split_root=origin != "added")
                 # Files dropped or pasted into PlatePilot are news too: they show under New until seen.
                 first_scan = origin != "added" and "sources" not in summaries.get(key, {})
                 summaries[key] = _update_library(library, folder, found, truncated, first_scan)
@@ -5269,23 +5290,26 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             source = (path, "folder", root, ())
             parts = _read_loose_folder(path, root)
         else:
-            if not _safe_archive_path(path, root):
+            # A file source is its folder limited to that one file.
+            folder = os.path.dirname(path) if kind == "file" else path
+            if not _safe_archive_path(folder, root) or (kind == "file" and not _model_type_for_name(path)):
                 raise ValueError(_t("err.folder_outside"))
-            names = row["files"] if row else sorted(n for n in os.listdir(path) if _model_type_for_name(n))
-            unsafe = [n for n in names if not _orca_can_read(os.path.join(path, n))]
+            names = ([os.path.basename(path)] if kind == "file" else
+                     row["files"] if row else sorted(n for n in os.listdir(path) if _model_type_for_name(n)))
+            unsafe = [n for n in names if not _orca_can_read(os.path.join(folder, n))]
             readable = [n for n in names if n not in unsafe and _model_type_for_name(n) in ("stl", "3mf")
-                        and os.path.getsize(os.path.join(path, n)) <= MAX_STL_BYTES]
-            catalog = tuple((n, _t("warn.unsafe_name") if n in unsafe else "") for n in names
-                            if n not in readable and _model_type_for_name(n) != "step")
-            copy = _snapshot_folder(path, readable, self._storage("folders"),
-                                    keep=[e["source"][0] for e in self._basket_entries() if e["source"][1] == "folder"])
+                        and os.path.getsize(os.path.join(folder, n)) <= MAX_STL_BYTES]
+            catalog = tuple((n, _t("warn.unsafe_name") if n in unsafe else "") for n in names if n not in readable)
+            copy = _snapshot_folder(folder, readable, self._storage("folders"),
+                                    keep=[e["source"][0] for e in self._basket_entries() if e["source"][1] == "folder"],
+                                    label=names[0] if kind == "file" else "")
             source = (copy, "folder", copy, catalog)
             parts = _read_loose_folder(copy, copy, catalog)
             # STEP files are not copied: their part points at the original, which Orca opens.
             steps = {n for n in names if _model_type_for_name(n) == "step"}
             for part in parts:
                 if part["filetype"] == "step" and part["name"] in steps:
-                    part["member"] = os.path.join(path, part["name"])
+                    part["member"] = os.path.join(folder, part["name"])
                     part["open_in_orca"] = part["name"] not in unsafe
         self._selected_source = source
         self._selected_name = row["name"] if row is not None else os.path.basename(path)
@@ -5907,7 +5931,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 self._mark_seen(list(getattr(self, "_rows", [])))
                 self._post_rows(config)
             elif kind == "open_model":
-                self._open_source(config, str(data.get("path", "")), "zip" if data.get("kind") == "zip" else "folder")
+                self._open_source(config, str(data.get("path", "")), data.get("kind") if data.get("kind") in ("zip", "file") else "folder")
             elif kind == "hide_source":
                 path = str(data.get("path", ""))
                 row = self._row(path)

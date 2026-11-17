@@ -8,7 +8,7 @@ PlatePilot is an [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) plugin f
 
 ## Features
 
-- **Model library.** Watches folders, finds ZIP archives and unpacked folders with STL, STEP and 3MF files, marks what is new since the last check (files you drop or paste included) and lists the newest first. Each folder shows a short summary: how many sources, how many are new, when it was checked. Search, filter by type or by folder, hide sources you don't need (the files stay on disk).
+- **Model library.** Watches folders, finds ZIP archives and unpacked folders with STL, STEP and 3MF files, marks what is new since the last check (files you drop or paste included) and lists the newest first. Each folder shows a short summary: how many sources, how many are new, when it was checked. Search, filter by type or by folder, hide sources you don't need (the files stay on disk). Model files lying in the watched folder itself, as browsers save downloads, are listed one by one, each its own source.
 - **Drag and drop, or Add files.** Drop ZIP, STL, STEP or 3MF files or a whole folder onto PlatePilot, paste them with Ctrl+V, or pick them with **Add files**. They are copied into PlatePilot's own folder and opened right away. Any file name works, and Orca does not ask for permission.
 - **A tidy list.** Archives that were never opened are judged by their names. Model downloads are listed up front; programs, drivers and archives with unclear names wait in a collapsed group at the bottom, and search still finds them.
 - **STL and 3MF parts** are previewed, laid out and sent to Prepare; each object of a 3MF is a part. **STEP parts** open in Orca with one button: Orca converts them itself.
@@ -102,7 +102,7 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Возможности
 
-- **Библиотека моделей.** Следит за папками, находит ZIP-архивы и распакованные папки с STL, STEP и 3MF отмечает новое с прошлой проверки (включая перетащенные и вставленные файлы) и показывает самые свежие первыми. У каждой папки — короткая сводка: сколько источников, сколько новых, когда проверялась. Поиск, фильтр по типу и по папке, скрытие ненужных источников (файлы остаются на диске).
+- **Библиотека моделей.** Следит за папками, находит ZIP-архивы и распакованные папки с STL, STEP и 3MF отмечает новое с прошлой проверки (включая перетащенные и вставленные файлы) и показывает самые свежие первыми. У каждой папки — короткая сводка: сколько источников, сколько новых, когда проверялась. Поиск, фильтр по типу и по папке, скрытие ненужных источников (файлы остаются на диске). Файлы моделей, лежащие прямо в отслеживаемой папке (так браузер сохраняет загрузки), показываются по одному, каждый своим источником.
 - **Перетаскивание и «Добавить файлы».** Перетащите на PlatePilot файлы ZIP, STL, STEP, 3MF или целую папку, вставьте их через Ctrl+V или выберите кнопкой **«Добавить файлы»**. Они копируются в собственную папку PlatePilot и сразу открываются. Имена файлов могут быть любыми, Orca не спрашивает разрешения.
 - **Аккуратный список.** Архивы, которые ещё не открывались, оцениваются по названию. Загрузки моделей идут в начале списка, а программы, драйверы и архивы с непонятными названиями свёрнуты в группу внизу; поиск находит и их.
 - **Детали STL и 3MF** показываются, раскладываются и отправляются в «Подготовку»; каждый объект 3MF — отдельная деталь. **STEP** открывается в Orca одной кнопкой: Orca преобразует его сама.

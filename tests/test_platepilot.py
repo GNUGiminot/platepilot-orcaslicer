@@ -501,6 +501,28 @@ class Library(unittest.TestCase):
         self.assertEqual((loose["count"], loose["type_counts"]["step"], loose["files"]), (2, 1, ["a.stl", "b.step"]))
         self.assertIsNone(next(r for r in rows if r["kind"] == "zip")["type_counts"])
 
+    def test_files_in_the_watched_folder_itself_are_sources_of_their_own(self):
+        write_tree(self.root, {"Axis.stl": box_stl(4, 4, 45), "Handle.3mf": b"x", "notes.txt": b"x"})
+        rows, _, _ = pp._scan_folder(self.root, split_root=True)
+        self.assertEqual(sorted((r["kind"], r["name"]) for r in rows),
+                         [("file", "Axis.stl"), ("file", "Handle.3mf"), ("folder", os.path.join("deep", "inner")),
+                          ("folder", "loose"), ("zip", "bundle.zip")])
+        axis = next(r for r in rows if r["name"] == "Axis.stl")
+        self.assertEqual((axis["count"], axis["files"], axis["path"]), (1, ["Axis.stl"], os.path.join(self.root, "Axis.stl")))
+        # Without split_root (the folder of added files) they stay one source.
+        rows, _, _ = pp._scan_folder(self.root)
+        self.assertIn(("folder", os.path.basename(self.root)), [(r["kind"], r["name"]) for r in rows])
+
+    def test_a_new_file_next_to_old_ones_is_new_alone(self):
+        state = {}
+        write_tree(self.root, {"old.stl": box_stl(4, 4, 4)})
+        rows, _, _ = pp._scan_folder(self.root, split_root=True)
+        pp._update_library(state, self.root, rows, False, first_scan=True, now=1)
+        write_tree(self.root, {"fresh.stl": box_stl(5, 5, 5)})
+        rows, _, _ = pp._scan_folder(self.root, split_root=True)
+        pp._update_library(state, self.root, rows, False, first_scan=False, now=2)
+        self.assertEqual([r["name"] for r in rows if r["new"]], ["fresh.stl"])
+
     def test_scan_without_subfolders(self):
         rows, _, _ = pp._scan_folder(self.root, recursive=False)
         self.assertEqual([r["name"] for r in rows], ["bundle.zip"])
@@ -1193,6 +1215,27 @@ class Basket(unittest.TestCase):
         self.assertEqual(sorted(i["name"] for i in plan["plates"][0]["items"]), sorted(["Leg.stl", pin]))
         reply = self.page.send({"type": "export_project"})
         self.assertEqual(os.path.basename(reply["path"]), "Loose + Kit - PlatePilot.3mf")
+
+    def test_files_lying_in_the_watched_folder_open_one_by_one(self):
+        write_tree(self.root, {"Axis.stl": box_stl(4, 4, 45), "Grip.stl": box_stl(30, 30, 60), "Grip.step": b"step"})
+        self.page.send({"type": "scan"})
+        rows = [r for r in self.page._rows if r["kind"] == "file"]
+        self.assertEqual(sorted(r["name"] for r in rows), ["Axis.stl", "Grip.step", "Grip.stl"])
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Axis.stl"), "kind": "file"})
+        self.assertEqual([p["name"] for p in self.page._open_parts], ["Axis.stl"])
+        self.page.send({"type": "basket_add", "members": [p["member"] for p in self.page._open_parts]})
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Grip.stl"), "kind": "file"})
+        self.assertEqual([p["name"] for p in self.page._open_parts], ["Grip.stl"])
+        basket = self.page.send({"type": "basket_add", "members": [p["member"] for p in self.page._open_parts]})
+        self.assertEqual([i["name"] for i in basket["items"]], ["Axis.stl", "Grip.stl"])
+        # Each file has its own copy, so the first one is still there for the basket.
+        plan = self.page.send({"type": "plan", "margin": 4, "plates": 1, "basket": True})
+        self.assertEqual(sorted(i["name"] for i in plan["plates"][0]["items"]), ["Axis.stl", "Grip.stl"])
+        self.page.send({"type": "plate_view", "plate": 0})
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Grip.step"), "kind": "file"})
+        step = self.page._open_parts
+        self.assertEqual([(p["name"], p["filetype"], p["member"]) for p in step],
+                         [("Grip.step", "step", os.path.join(self.root, "Grip.step"))])
 
     def test_folder_copies_the_basket_reads_are_kept(self):
         folders = []
