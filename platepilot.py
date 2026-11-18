@@ -4,14 +4,16 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.10.2"
+# version = "0.10.3"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
 
+from array import array
 import base64
 import hashlib
 import io
+import itertools
 import json
 import math
 import os
@@ -29,7 +31,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.10.2"
+VERSION = "0.10.3"
 SUPPORT_URL = "https://t.me/GIMINOT"   # the author's Telegram: Support opens it in the browser
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
@@ -3131,6 +3133,11 @@ def _model_type_for_name(name):
     return MODEL_EXTENSIONS.get(os.path.splitext(str(name).lower())[1])
 
 
+def _part_file_counts(parts):
+    """Model files behind an archive's parts: the objects of one 3MF ("kit.3mf#2") are one file."""
+    return _type_counts({re.sub(r"#\d+$", "", part.get("member") or part["name"]) for part in parts})
+
+
 def _type_counts(names):
     counts = {name: 0 for name in MODEL_TYPE_LABELS}
     for name in names:
@@ -3802,6 +3809,10 @@ def _update_library(state, folder, rows, truncated, first_scan, now=None):
     for row in rows:
         if row["kind"] == "zip":
             cached = zips.get(row["path"])
+            # 0.10.2 and older counted 3MF objects ("Steve.3mf · 1") as no model at all and hid the
+            # archive; an empty count from them is not trusted.
+            if cached and not cached.get("v") and not sum(cached.get("counts", {}).values()):
+                cached = None
             if cached and cached.get("fingerprint") == row["fingerprint"]:
                 row["type_counts"] = dict(cached.get("counts", {}))
                 row["count"] = sum(row["type_counts"].values())
@@ -4030,10 +4041,82 @@ def _threemf_then(a, b):
     return tuple(out)
 
 
+THREEMF_MESH = re.compile(rb"<mesh>.*?</mesh>", re.S)
+THREEMF_VERTEX = re.compile(rb'<vertex x="([^"]*)" y="([^"]*)" z="([^"]*)"')
+THREEMF_TRIANGLE = re.compile(rb'<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"')
+VERTEX = struct.Struct("<3f")
+FLOAT32 = struct.Struct("<f")
+
+
+class _NotPlain(Exception):
+    """A mesh written differently from the usual <vertex x= y= z=/> and <triangle v1= v2= v3=/>."""
+
+
+def _threemf_fast_meshes(data):
+    """Take the meshes out of a 3MF model's text with regular expressions, which is about twice
+    as fast as ElementTree on a model of hundreds of MB. Returns the text with each mesh replaced
+    by <mesh pp-mesh="i"/> and the meshes as (vertex coordinates, triangle corners) arrays.
+    Raises _NotPlain when a mesh is written in another way; the caller then parses the whole text."""
+    meshes = []
+
+    def take(match):
+        block = match.group(0)
+        vertices = THREEMF_VERTEX.findall(block)
+        triangles = THREEMF_TRIANGLE.findall(block)
+        if len(vertices) != block.count(b"<vertex ") or len(triangles) != block.count(b"<triangle "):
+            raise _NotPlain()
+        meshes.append((array("d", map(float, itertools.chain.from_iterable(vertices))),
+                       array("i", map(int, itertools.chain.from_iterable(triangles)))))
+        return b'<mesh pp-mesh="%d"/>' % (len(meshes) - 1)
+
+    return THREEMF_MESH.sub(take, data), meshes
+
+
+class _ThreeMFObject:
+    """One build item of a 3MF: its name, size and facet count are known when the file is read;
+    the STL (needed for the 3D view, the orientation check and the project) is built when asked."""
+
+    __slots__ = ("name", "dims", "facets", "_pieces", "_stl")
+
+    def __init__(self, name, pieces):
+        self.name, self._pieces, self._stl = name, pieces, None
+        self.facets = sum(len(triangles) // 3 for _, triangles, _ in pieces)
+        lo, hi = [math.inf] * 3, [-math.inf] * 3
+        for vertices, triangles, m in pieces:
+            xs, ys, zs = vertices[0::3], vertices[1::3], vertices[2::3]
+            for axis in range(3):
+                a, b, c, d = m[axis], m[3 + axis], m[6 + axis], m[9 + axis]
+                if b == 0.0 and c == 0.0:      # no rotation into this axis: the usual case
+                    values = (min(xs) * a + d, max(xs) * a + d)
+                else:
+                    values = [x * a + y * b + z * c + d for x, y, z in zip(xs, ys, zs)]
+                lo[axis], hi[axis] = min(lo[axis], min(values)), max(hi[axis], max(values))
+        # As the STL stores them: 32-bit floats.
+        f32 = lambda v: FLOAT32.unpack(FLOAT32.pack(v))[0]
+        self.dims = [round(f32(hi[i]) - f32(lo[i]), 3) for i in range(3)]
+
+    @property
+    def stl(self):
+        if self._stl is None:
+            records = []
+            for vertices, triangles, m in self._pieces:
+                xs, ys, zs = vertices[0::3], vertices[1::3], vertices[2::3]
+                # Each vertex is packed once; a facet is a zero normal (Orca computes its own),
+                # three packed vertices and two attribute bytes.
+                packed = [VERTEX.pack(x * m[0] + y * m[3] + z * m[6] + m[9], x * m[1] + y * m[4] + z * m[7] + m[10],
+                                      x * m[2] + y * m[5] + z * m[8] + m[11]) for x, y, z in zip(xs, ys, zs)]
+                normal, attribute = bytes(12), bytes(2)
+                it = iter(triangles)
+                records.extend(b"".join((normal, packed[a], packed[b], packed[c], attribute)) for a, b, c in zip(it, it, it))
+            self._stl = b"PlatePilot from 3MF".ljust(80) + struct.pack("<I", len(records)) + b"".join(records)
+            self._pieces = None
+        return self._stl
+
+
 def _threemf_parts(raw):
-    """[(object name, binary STL bytes)] for each build item of a 3MF, in millimetres, placed
-    as the 3MF places it. Objects made of components, also from the other model files of a
-    Bambu or Orca project (the production extension's path), are followed through."""
+    """[_ThreeMFObject] for each build item of a 3MF, in millimetres, placed as the 3MF places it.
+    Objects made of components, also from the other model files of a Bambu or Orca project (the
+    production extension's path), are followed through."""
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         root = "3D/3dmodel.model"
         try:
@@ -4048,7 +4131,13 @@ def _threemf_parts(raw):
         def model(path):
             path = path.lstrip("/")
             if path not in models:
-                tree = ElementTree.fromstring(archive.read(path))
+                data = archive.read(path)
+                try:
+                    data, fast = _threemf_fast_meshes(data)
+                except _NotPlain:
+                    fast = []
+                tree = ElementTree.fromstring(data)
+                del data
                 objects = {}
                 resources = tree.find(THREEMF_CORE + "resources")
                 for obj in (resources if resources is not None else []):
@@ -4056,10 +4145,13 @@ def _threemf_parts(raw):
                         continue
                     mesh = obj.find(THREEMF_CORE + "mesh")
                     if mesh is not None:
-                        vertices = [(float(v.get("x")), float(v.get("y")), float(v.get("z")))
-                                    for v in mesh.find(THREEMF_CORE + "vertices")]
-                        triangles = [(int(f.get("v1")), int(f.get("v2")), int(f.get("v3")))
-                                     for f in mesh.find(THREEMF_CORE + "triangles")]
+                        if mesh.get("pp-mesh") is not None:
+                            vertices, triangles = fast[int(mesh.get("pp-mesh"))]
+                        else:
+                            vertices = array("d", (float(v.get(k)) for v in mesh.find(THREEMF_CORE + "vertices") for k in "xyz"))
+                            triangles = array("i", (int(f.get(k)) for f in mesh.find(THREEMF_CORE + "triangles") for k in ("v1", "v2", "v3")))
+                        if triangles and (max(triangles) >= len(vertices) // 3 or min(triangles) < 0):
+                            raise ValueError(_t("err.stl_vertices"))
                         objects[obj.get("id")] = (obj.get("name") or "", vertices, triangles, None)
                     else:
                         components = obj.find(THREEMF_CORE + "components")
@@ -4073,14 +4165,10 @@ def _threemf_parts(raw):
             if depth > 16:
                 raise ValueError(_t("err.3mf_nesting"))
             name, vertices, triangles, components = model(path)[1][object_id]
-            if vertices is not None:
-                m = matrix
-                placed = [(x * m[0] + y * m[3] + z * m[6] + m[9], x * m[1] + y * m[4] + z * m[7] + m[10],
-                           x * m[2] + y * m[5] + z * m[8] + m[11]) for x, y, z in vertices]
-                for a, b, c in triangles:
-                    out.append(placed[a] + placed[b] + placed[c])
-                    if len(out) > 2_000_000:
-                        raise ValueError(_t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024)))
+            if vertices is not None and triangles:
+                out.append((vertices, triangles, matrix))
+                if sum(len(tr) // 3 for _, tr, _ in out) > 2_000_000:
+                    raise ValueError(_t("warn.too_big", mb=MAX_STL_BYTES // (1024 * 1024)))
             for child, child_matrix, child_path in components or []:
                 collect(child_path, child, _threemf_then(child_matrix, matrix), out, depth + 1)
 
@@ -4091,18 +4179,11 @@ def _threemf_parts(raw):
         for item in (build if build is not None else []):
             if item.tag != THREEMF_CORE + "item":
                 continue
-            triangles = []
-            collect(root, item.get("objectid"), _threemf_matrix(item.get("transform")), triangles)
-            if not triangles:
-                continue
-            stl = bytearray(84 + 50 * len(triangles))
-            stl[0:80] = b"PlatePilot from 3MF".ljust(80)
-            struct.pack_into("<I", stl, 80, len(triangles))
-            offset = 84
-            for tri in triangles:
-                STL_RECORD.pack_into(stl, offset, 0.0, 0.0, 0.0, *(v * scale for v in tri), 0)
-                offset += 50
-            result.append((objects.get(item.get("objectid"), ("",))[0], bytes(stl)))
+            pieces = []
+            # The unit is part of the placement: millimetres come out directly.
+            collect(root, item.get("objectid"), tuple(v * scale for v in _threemf_matrix(item.get("transform"))), pieces)
+            if pieces:
+                result.append(_ThreeMFObject(objects.get(item.get("objectid"), ("",))[0], pieces))
         return result
 
 
@@ -4128,12 +4209,11 @@ def _split_member(member):
 def _threemf_part_rows(name, member, items):
     """Parts for the objects of one 3MF: a single object is listed under the file's name."""
     rows = []
-    for i, (object_name, stl) in enumerate(items):
-        stats = _binary_stl_info(stl)
-        label = name if len(items) == 1 else f"{name} · {object_name or i + 1}"
-        warning = "" if all(v > 0 for v in stats["dims"]) else _t("warn.empty_model")
+    for i, item in enumerate(items):
+        label = name if len(items) == 1 else f"{name} · {item.name or i + 1}"
+        warning = "" if all(v > 0 for v in item.dims) else _t("warn.empty_model")
         rows.append({"name": label, "member": member if len(items) == 1 else f"{member}#{i}", "filetype": "3mf",
-                     "dims": stats["dims"], "facets": stats["facets"], "included": True, "warning": warning})
+                     "dims": item.dims, "facets": item.facets, "included": True, "warning": warning})
     return rows
 
 
@@ -5313,8 +5393,8 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
             source = (path, "zip", root, ())
             parts = _read_archive(path, root)
             if row is not None:
-                counts = _type_counts(p["name"] for p in parts)
-                self._library().setdefault("zips", {})[path] = {"fingerprint": row["fingerprint"], "counts": counts}
+                counts = _part_file_counts(parts)
+                self._library().setdefault("zips", {})[path] = {"fingerprint": row["fingerprint"], "counts": counts, "v": 2}
                 row["type_counts"], row["count"] = counts, sum(counts.values())
                 row["likely"] = _likely_models(row)
         elif self._is_added(path):
@@ -5564,7 +5644,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                         raise ValueError(_t("err.stl_limit", mb=MAX_STL_BYTES // (1024 * 1024)))
                     if path.lower().endswith(".3mf"):
                         items = _threemf_cached(("zip", source[0], path, info.file_size, info.CRC), lambda info=info: zf.read(info))
-                        blobs[member] = items[index or 0][1]
+                        blobs[member] = items[index or 0].stl
                     else:
                         blobs[member] = zf.read(info)
         else:
@@ -5580,7 +5660,7 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                     def read(path=path):
                         with open(path, "rb") as stream:
                             return stream.read()
-                    blobs[member] = _threemf_cached(("file", path, size, os.path.getmtime(path)), read)[index or 0][1]
+                    blobs[member] = _threemf_cached(("file", path, size, os.path.getmtime(path)), read)[index or 0].stl
                     continue
                 with open(path, "rb") as stream:
                     blobs[member] = stream.read(MAX_STL_BYTES + 1)

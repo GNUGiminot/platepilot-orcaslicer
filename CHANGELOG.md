@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+- **Fixed: an archive of 3MF files vanished from the list after opening.** Its parts were read, but the model count was taken from the part names ("Steve.3mf · 1"), found no model files and hid the archive as empty, also after a restart. Archives are now counted by the files behind their parts; empty counts saved by older versions are not trusted, so such archives come back by themselves.
+- **Big 3MF files open about twice as fast.** The meshes are read with plain text matching instead of a full XML parse (files written differently are still read the old way), and a part's STL is built only when it is previewed, checked, laid out or sent. A 3MF holding a 180 MB model with 2.3 million facets now opens in about 4 seconds instead of 9. Parts, sizes and the geometry sent to Orca are exactly as before.
+
 ## 0.10.2
 
 - **Support button.** A **Support** button with a printed heart sits next to Settings. It opens the author's Telegram, t.me/GIMINOT, in your browser, where you can send Telegram Stars (Gift → Stars in the profile). If the browser does not open, PlatePilot shows the link.

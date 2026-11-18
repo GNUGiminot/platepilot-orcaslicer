@@ -556,10 +556,27 @@ class Library(unittest.TestCase):
         zip_path = os.path.join(self.root, "bundle.zip")
         rows, _, _ = pp._scan_folder(self.root)
         fingerprint = next(r for r in rows if r["kind"] == "zip")["fingerprint"]
-        state = {"zips": {zip_path: {"fingerprint": fingerprint, "counts": {"stl": 0, "step": 0, "3mf": 0}}}}
+        state = {"zips": {zip_path: {"fingerprint": fingerprint, "counts": {"stl": 0, "step": 0, "3mf": 0}, "v": 2}}}
         summary = pp._update_library(state, self.root, rows, False, first_scan=True)
         self.assertEqual(next(r for r in rows if r["kind"] == "zip")["count"], 0)
         self.assertEqual((summary["empty"], summary["sources"]), (1, 2))
+
+    def test_an_empty_count_from_0_10_2_is_not_trusted(self):
+        zip_path = os.path.join(self.root, "bundle.zip")
+        rows, _, _ = pp._scan_folder(self.root)
+        fingerprint = next(r for r in rows if r["kind"] == "zip")["fingerprint"]
+        state = {"zips": {zip_path: {"fingerprint": fingerprint, "counts": {"stl": 0, "step": 0, "3mf": 0}}}}
+        pp._update_library(state, self.root, rows, False, first_scan=True)
+        self.assertIsNone(next(r for r in rows if r["kind"] == "zip")["type_counts"])
+        state["zips"][zip_path]["v"] = 2   # counted by 0.10.3: really empty
+        rows, _, _ = pp._scan_folder(self.root)
+        pp._update_library(state, self.root, rows, False, first_scan=True)
+        self.assertEqual(next(r for r in rows if r["kind"] == "zip")["count"], 0)
+
+    def test_part_file_counts(self):
+        parts = [{"name": "Steve.3mf · 1", "member": "Steve.3mf#1"}, {"name": "Steve.3mf · 2", "member": "Steve.3mf#2"},
+                 {"name": "Part#2.stl", "member": "dir/Part#2.stl"}, {"name": "big.3mf"}]
+        self.assertEqual(pp._part_file_counts(parts), {"stl": 1, "step": 0, "3mf": 2})
 
     def test_sources_gone_from_disk_are_forgotten(self):
         gone = os.path.join(self.root, "gone.zip")
@@ -792,15 +809,19 @@ class ThreeMF(unittest.TestCase):
                       '<build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 100 50 0"/></build>')
         items = pp._threemf_parts(raw)
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0][0], "box")
-        self.assertEqual(self.dims(items[0][1]), [10.0, 20.0, 5.0])
+        self.assertEqual(items[0].name, "box")
+        self.assertEqual(self.dims(items[0].stl), [10.0, 20.0, 5.0])
+        self.assertEqual(items[0].dims, [10.0, 20.0, 5.0])
         inch = pp._threemf_parts(threemf("<resources>" + box_model(1, 2, 1) + '</resources><build><item objectid="1"/></build>', unit="inch"))
-        self.assertEqual([round(v, 3) for v in self.dims(inch[0][1])], [25.4, 50.8, 25.4])
+        self.assertEqual([round(v, 3) for v in self.dims(inch[0].stl)], [25.4, 50.8, 25.4])
+        self.assertEqual(inch[0].dims, self.dims(inch[0].stl))
 
     def test_rotation_is_applied(self):
         # A quarter turn about Z: 10 x 20 becomes 20 x 10.
         raw = threemf("<resources>" + box_model(10, 20, 5) + '</resources><build><item objectid="1" transform="0 1 0 -1 0 0 0 0 1 0 0 0"/></build>')
-        self.assertEqual([round(v, 4) for v in self.dims(pp._threemf_parts(raw)[0][1])], [20.0, 10.0, 5.0])
+        item = pp._threemf_parts(raw)[0]
+        self.assertEqual([round(v, 4) for v in self.dims(item.stl)], [20.0, 10.0, 5.0])
+        self.assertEqual(item.dims, self.dims(item.stl))
 
     def test_components_from_another_model_file_like_bambu_and_orca(self):
         part_file = f'<model unit="millimeter" xmlns="{CORE}"><resources>' + box_model(10, 10, 10, "7") + "</resources><build/></model>"
@@ -810,7 +831,23 @@ class ThreeMF(unittest.TestCase):
                       '</components></object></resources><build><item objectid="2"/></build>',
                       {"3D/Objects/object_1.model": part_file})
         items = pp._threemf_parts(raw)
-        self.assertEqual([(n, self.dims(s)) for n, s in items], [("pair", [40.0, 10.0, 10.0])])
+        self.assertEqual([(i.name, self.dims(i.stl)) for i in items], [("pair", [40.0, 10.0, 10.0])])
+        self.assertEqual(items[0].dims, [40.0, 10.0, 10.0])
+        self.assertEqual(items[0].facets, 24)
+
+    def test_a_mesh_written_another_way_is_read_as_before(self):
+        # Attributes in another order: the fast reading steps aside and ElementTree reads the file.
+        plain = threemf("<resources>" + box_model(10, 20, 5) + '</resources><build><item objectid="1"/></build>')
+        other = threemf("<resources>" + re.sub(r'<vertex x="([^"]*)" y="([^"]*)" z="([^"]*)"/>', r'<vertex z="\3" y="\2" x="\1"/>',
+                                                box_model(10, 20, 5)) + '</resources><build><item objectid="1"/></build>')
+        a, b = pp._threemf_parts(plain)[0], pp._threemf_parts(other)[0]
+        self.assertEqual((a.dims, a.facets), (b.dims, b.facets))
+        self.assertEqual(a.stl, b.stl)
+
+    def test_a_triangle_with_a_missing_corner_is_refused(self):
+        bad = box_model(10, 20, 5).replace('v3="2"', 'v3="99"', 1)
+        with self.assertRaises(ValueError):
+            pp._threemf_parts(threemf("<resources>" + bad + '</resources><build><item objectid="1"/></build>'))
 
     def test_several_objects_become_several_parts(self):
         raw = threemf("<resources>" + box_model(10, 10, 10, "1", "left") + box_model(20, 5, 5, "2", "right") + "</resources>"
@@ -1236,6 +1273,24 @@ class Basket(unittest.TestCase):
         step = self.page._open_parts
         self.assertEqual([(p["name"], p["filetype"], p["member"]) for p in step],
                          [("Grip.step", "step", os.path.join(self.root, "Grip.step"))])
+
+    def test_an_archive_of_3mf_files_stays_listed_after_opening(self):
+        with zipfile.ZipFile(os.path.join(self.root, "Characters.zip"), "w") as archive:
+            for name in ("Steve.3mf", "Alex.3mf"):
+                archive.writestr(name, threemf("<resources>" + box_model(20, 20, 5) + box_model(8, 8, 8, object_id="2", name="arm")
+                                               + '</resources><build><item objectid="1"/><item objectid="2"/></build>'))
+        self.page.send({"type": "scan"})
+        self.page.messages.clear()
+        self.page.send({"type": "open_model", "path": os.path.join(self.root, "Characters.zip"), "kind": "zip"})
+        self.assertEqual(len(self.page._open_parts), 4)
+        listed = [m for m in self.page.messages if m.get("type") == "archives"][-1]["archives"]
+        row = next(a for a in listed if a["name"] == "Characters.zip")
+        self.assertEqual((row["count"], row["type_counts"]), (2, {"3MF": 2}))
+        # and the next scan, from the library, lists it the same
+        self.page.messages.clear()
+        self.page.send({"type": "scan"})
+        listed = [m for m in self.page.messages if m.get("type") == "archives"][-1]["archives"]
+        self.assertIn("Characters.zip", [a["name"] for a in listed])
 
     def test_folder_copies_the_basket_reads_are_kept(self):
         folders = []
