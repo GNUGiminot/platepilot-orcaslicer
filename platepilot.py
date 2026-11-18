@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.10.3"
+# version = "0.10.4"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -31,8 +31,36 @@ import zipfile
 import orca
 
 
-VERSION = "0.10.3"
-SUPPORT_URL = "https://t.me/GIMINOT"   # the author's Telegram: Support opens it in the browser
+VERSION = "0.10.4"
+# Support: the author's donation bot @GiminotDonateBot (Telegram Stars), project "platepilot".
+# The page only sends an amount; the link always comes from these tables.
+DONATE_BOT = "GiminotDonateBot"
+SUPPORT_URL = f"https://t.me/{DONATE_BOT}?start=p_platepilot"      # bot menu: amounts + own amount
+DONATE_CUSTOM_URL = f"https://t.me/{DONATE_BOT}?start=c_platepilot"  # the bot asks for the amount
+DONATE_AMOUNTS = (50, 100, 250, 500)
+# Invoice links (createInvoiceLink): the Telegram payment window opens at once, in the UI language.
+DONATE_LINKS = {
+    "en": ("https://t.me/$aQ4eJv2X6Us3HAAArC2HKBYARQY", "https://t.me/$1_gY0v2X6Us4HAAA4ahUDLXlksQ",
+           "https://t.me/$LZ9HRf2X6Us5HAAARtqsl0_5hKo", "https://t.me/$batnUf2X6Us6HAAAhYVhROIu2W8"),
+    "ru": ("https://t.me/$XtaFuv2X6Us7HAAAPTEeXzR6lZc", "https://t.me/$xH9NAv2X6Us8HAAAd8JBE8f5Egg",
+           "https://t.me/$Oz7Kkv2X6Us9HAAAiVtEwvkeP0A", "https://t.me/$pACCJP2X6Us-HAAAkoMRr8ZIMvw"),
+    "de": ("https://t.me/$C5ryvv2X6Us_HAAASfbO8hmQzBY", "https://t.me/$XNKXwv2X6UtAHAAACtOfXEXXlwk",
+           "https://t.me/$OuUwyf2X6UtBHAAAbPuCsCnY7zg", "https://t.me/$0cKNvP2X6UtCHAAAX8aPWqTWuI0"),
+    "fr": ("https://t.me/$PzdRaf2X6UtDHAAAjoOBXIS0eNQ", "https://t.me/$C0KO7P2X6UtEHAAABpICmpwvmzo",
+           "https://t.me/$2LF0IP2X6UtFHAAAI3jWNOHvjnw", "https://t.me/$x2-A9_2X6UtGHAAAqRlVP__Rark"),
+    "es": ("https://t.me/$WWrSHP2X6UtHHAAAqqsGGCgel7Q", "https://t.me/$F3g4c_2X6UtIHAAAL113moFL94c",
+           "https://t.me/$TTMJb_2X6UtJHAAA-BZHFAi0e90", "https://t.me/$kyoyqv2X6UtKHAAAbnC7ni5QWKY"),
+    "pt_BR": ("https://t.me/$fq-WUP2X6UtLHAAA5kzin5G2zrk", "https://t.me/$eeXxP_2X6UtMHAAA1fe8wxBCj20",
+              "https://t.me/$2c2h1P2X6UtNHAAAykovp5M-_OM", "https://t.me/$KvA1Cv2X6UtOHAAAVf_0NgHD9hA"),
+    "it": ("https://t.me/$lPs3ef2X6UtPHAAAhTt9xhNcDHA", "https://t.me/$dgccP_2X6UtQHAAAKn4xD1mAHg4",
+           "https://t.me/$q5Zfdv2X6UtRHAAAJNvdkSIfOVQ", "https://t.me/$UGYgW_2X6UtSHAAAWOr9Oawb-z8"),
+    "tr": ("https://t.me/$V4EU8v2X6UtTHAAAKbyY_GEa6PU", "https://t.me/$Bhuy-f2X6UtUHAAA5tnWnCHP5lg",
+           "https://t.me/$Ve-yFf2X6UtVHAAAgwozeU7edYk", "https://t.me/$i_4i5f2X6UtWHAAALvuud2lc6RA"),
+    "ja": ("https://t.me/$Bt99aP2X6UtXHAAAPEuDOY-9d_k", "https://t.me/$_LlMKf2X6UtYHAAA8YMsKhIAJQw",
+           "https://t.me/$FjhHx_2X6UtZHAAAeUvGzX48Oxs", "https://t.me/$hynVZf2X6UtaHAAAluRuTrTkCWk"),
+    "zh_CN": ("https://t.me/$64QpYv2X6UtbHAAARRBFW6VGJik", "https://t.me/$Wwt_ff2X6UtcHAAAo-IHAfm3PTs",
+              "https://t.me/$MAzknv2X6UtdHAAASOhp20CnHck", "https://t.me/$T22XIP2X6UteHAAAyqRid4MHQps"),
+}
 MAX_ARCHIVES = 500
 # A binary STL of 2 million facets, the most the STL reader takes, is 100 000 084 bytes.
 MAX_STL_BYTES = 100 * 1024 * 1024
@@ -90,8 +118,11 @@ STRINGS = {
     "btn.folders": ("Settings", "Настройки"),
     "btn.add_files": ("Add files", "Добавить файлы"),
     "btn.support": ("Support", "Поддержать"),
-    "btn.support_tip": ("Support PlatePilot with Telegram Stars: opens t.me/GIMINOT in your browser", "Поддержать PlatePilot звёздами Telegram: откроется t.me/GIMINOT в браузере"),
-    "err.support_open": ("The browser did not open. The author's Telegram: {url}", "Браузер не открылся. Telegram автора: {url}"),
+    "btn.support_tip": ("Support PlatePilot with Telegram Stars", "Поддержать PlatePilot звёздами Telegram"),
+    "err.support_open": ("The browser did not open. The link: {url}", "Браузер не открылся. Ссылка: {url}"),
+    "donate.title": ("Support with Telegram Stars", "Поддержать звёздами Telegram"),
+    "donate.custom": ("Custom amount…", "Своя сумма…"),
+    "donate.note": ("Telegram opens the payment window. Voluntary — just a thank-you.", "Откроется окно оплаты Telegram. Добровольно — просто спасибо."),
     "btn.add_files_tip": ("Add ZIP, STL, STEP or 3MF files. They are copied into PlatePilot, so Orca does not ask for permission.", "Добавить файлы ZIP, STL, STEP или 3MF. Они копируются в PlatePilot, поэтому Orca не спрашивает разрешения."),
     "lib.title": ("Library", "Библиотека"),
     "lib.search": ("Search by name", "Поиск по названию"),
@@ -387,8 +418,11 @@ _LANG = "en"
 EXTRA_STRINGS = {
     "de": {
         "btn.support": "Unterstützen",
-        "btn.support_tip": "PlatePilot mit Telegram Stars unterstützen: öffnet t.me/GIMINOT im Browser",
-        "err.support_open": "Der Browser hat sich nicht geöffnet. Telegram des Autors: {url}",
+        "btn.support_tip": "PlatePilot mit Telegram Stars unterstützen",
+        "err.support_open": "Der Browser hat sich nicht geöffnet. Der Link: {url}",
+        "donate.title": "Mit Telegram Stars unterstützen",
+        "donate.custom": "Eigener Betrag…",
+        "donate.note": "Telegram öffnet das Zahlungsfenster. Freiwillig – einfach ein Dankeschön.",
         "err.3mf_transform": "die Lage eines Objekts in der Datei ist beschädigt",
         "err.3mf_nesting": "Objekte sind zu tief verschachtelt",
         "app.tagline": "Modellbibliothek und Plattenplaner",
@@ -657,8 +691,11 @@ EXTRA_STRINGS = {
     },
     "fr": {
         "btn.support": "Soutenir",
-        "btn.support_tip": "Soutenir PlatePilot avec des étoiles Telegram : ouvre t.me/GIMINOT dans le navigateur",
-        "err.support_open": "Le navigateur ne s’est pas ouvert. Telegram de l’auteur : {url}",
+        "btn.support_tip": "Soutenir PlatePilot avec des Telegram Stars",
+        "err.support_open": "Le navigateur ne s’est pas ouvert. Le lien : {url}",
+        "donate.title": "Soutenir avec des Telegram Stars",
+        "donate.custom": "Montant libre…",
+        "donate.note": "Telegram ouvre la fenêtre de paiement. Volontaire — simplement un merci.",
         "err.3mf_transform": "la position d’un objet dans le fichier est corrompue",
         "err.3mf_nesting": "les objets sont imbriqués trop profondément",
         "app.tagline": "Bibliothèque de modèles et planificateur de plaques",
@@ -927,8 +964,11 @@ EXTRA_STRINGS = {
     },
     "es": {
         "btn.support": "Apoyar",
-        "btn.support_tip": "Apoya PlatePilot con estrellas de Telegram: abre t.me/GIMINOT en el navegador",
-        "err.support_open": "El navegador no se abrió. Telegram del autor: {url}",
+        "btn.support_tip": "Apoya PlatePilot con Telegram Stars",
+        "err.support_open": "El navegador no se abrió. El enlace: {url}",
+        "donate.title": "Apoyar con Telegram Stars",
+        "donate.custom": "Otra cantidad…",
+        "donate.note": "Telegram abre la ventana de pago. Voluntario: simplemente un gracias.",
         "err.3mf_transform": "la posición de un objeto en el archivo está dañada",
         "err.3mf_nesting": "los objetos están anidados demasiado",
         "app.tagline": "Biblioteca de modelos y planificador de placas",
@@ -1197,8 +1237,11 @@ EXTRA_STRINGS = {
     },
     "pt_BR": {
         "btn.support": "Apoiar",
-        "btn.support_tip": "Apoie o PlatePilot com estrelas do Telegram: abre t.me/GIMINOT no navegador",
-        "err.support_open": "O navegador não abriu. Telegram do autor: {url}",
+        "btn.support_tip": "Apoie o PlatePilot com Telegram Stars",
+        "err.support_open": "O navegador não abriu. O link: {url}",
+        "donate.title": "Apoiar com Telegram Stars",
+        "donate.custom": "Outro valor…",
+        "donate.note": "O Telegram abre a janela de pagamento. Voluntário — apenas um obrigado.",
         "err.3mf_transform": "a posição de um objeto no arquivo está corrompida",
         "err.3mf_nesting": "os objetos estão aninhados demais",
         "app.tagline": "Biblioteca de modelos e planejador de placas",
@@ -1467,8 +1510,11 @@ EXTRA_STRINGS = {
     },
     "it": {
         "btn.support": "Sostieni",
-        "btn.support_tip": "Sostieni PlatePilot con le stelle di Telegram: apre t.me/GIMINOT nel browser",
-        "err.support_open": "Il browser non si è aperto. Telegram dell’autore: {url}",
+        "btn.support_tip": "Sostieni PlatePilot con le Telegram Stars",
+        "err.support_open": "Il browser non si è aperto. Il link: {url}",
+        "donate.title": "Sostieni con le Telegram Stars",
+        "donate.custom": "Importo libero…",
+        "donate.note": "Telegram apre la finestra di pagamento. Volontario: semplicemente un grazie.",
         "err.3mf_transform": "la posizione di un oggetto nel file è danneggiata",
         "err.3mf_nesting": "gli oggetti sono annidati troppo in profondità",
         "app.tagline": "Libreria di modelli e pianificatore di piastre",
@@ -1737,8 +1783,11 @@ EXTRA_STRINGS = {
     },
     "tr": {
         "btn.support": "Destekle",
-        "btn.support_tip": "PlatePilot'u Telegram Yıldızları ile destekle: tarayıcıda t.me/GIMINOT açılır",
-        "err.support_open": "Tarayıcı açılmadı. Yazarın Telegram'ı: {url}",
+        "btn.support_tip": "PlatePilot'u Telegram Stars ile destekle",
+        "err.support_open": "Tarayıcı açılmadı. Bağlantı: {url}",
+        "donate.title": "Telegram Stars ile destekle",
+        "donate.custom": "Başka miktar…",
+        "donate.note": "Telegram ödeme penceresini açar. Gönüllü — sadece bir teşekkür.",
         "err.3mf_transform": "dosyadaki bir nesnenin konumu bozuk",
         "err.3mf_nesting": "nesneler çok derin iç içe",
         "app.tagline": "Model kütüphanesi ve plaka planlayıcı",
@@ -2007,8 +2056,11 @@ EXTRA_STRINGS = {
     },
     "ja": {
         "btn.support": "応援する",
-        "btn.support_tip": "Telegram スターで PlatePilot を応援：ブラウザーで t.me/GIMINOT を開きます",
-        "err.support_open": "ブラウザーが開きませんでした。作者の Telegram：{url}",
+        "btn.support_tip": "Telegram Stars で PlatePilot を応援",
+        "err.support_open": "ブラウザーが開きませんでした。リンク：{url}",
+        "donate.title": "Telegram Stars で応援する",
+        "donate.custom": "金額を入力…",
+        "donate.note": "Telegram の支払い画面が開きます。任意の、ただの「ありがとう」です。",
         "err.3mf_transform": "ファイル内のオブジェクトの位置情報が壊れています",
         "err.3mf_nesting": "オブジェクトの入れ子が深すぎます",
         "app.tagline": "モデルライブラリとプレート計画",
@@ -2277,8 +2329,11 @@ EXTRA_STRINGS = {
     },
     "zh_CN": {
         "btn.support": "支持作者",
-        "btn.support_tip": "用 Telegram 星星支持 PlatePilot：在浏览器中打开 t.me/GIMINOT",
-        "err.support_open": "浏览器没有打开。作者的 Telegram：{url}",
+        "btn.support_tip": "用 Telegram Stars 支持 PlatePilot",
+        "err.support_open": "浏览器没有打开。链接：{url}",
+        "donate.title": "用 Telegram Stars 支持",
+        "donate.custom": "自定义金额…",
+        "donate.note": "将打开 Telegram 付款窗口。自愿的，只是一份感谢。",
         "err.3mf_transform": "文件中某个对象的位置数据已损坏",
         "err.3mf_nesting": "对象嵌套层级过深",
         "app.tagline": "模型库与多盘排布",
@@ -2561,6 +2616,18 @@ def _set_language(choice):
     return _LANG
 
 
+def _donate_url(amount):
+    """The link Support opens: an invoice link in the UI language for a preset amount,
+    the bot's "own amount" for "custom", the bot's menu for anything else."""
+    if amount == "custom":
+        return DONATE_CUSTOM_URL
+    try:
+        index = DONATE_AMOUNTS.index(int(amount))
+    except (TypeError, ValueError):
+        return SUPPORT_URL
+    return DONATE_LINKS.get(_LANG, DONATE_LINKS["en"])[index]
+
+
 def _orca_language(code):
     """PlatePilot's language for Orca's language code ("de_DE", "pt_BR", "zh_CN"…); English otherwise."""
     code = str(code or "").replace("-", "_").lower()
@@ -2618,6 +2685,8 @@ PAGE = r"""<!doctype html>
 *{box-sizing:border-box}[hidden]{display:none!important}html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);display:grid;grid-template-rows:auto 3px minmax(0,1fr) auto;overflow:hidden}
 svg.ic-support{width:20px;height:20px;flex:none;margin:-2px 0}
+.donate{position:relative}.donate-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:250px;padding:12px;display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:var(--r);background:var(--raised);box-shadow:var(--shadow)}.donate-menu[hidden]{display:none}
+.donate-menu b{font-size:13px}.donate-amounts{display:grid;grid-template-columns:1fr 1fr;gap:6px}.donate-amounts button{font-weight:600}.donate-custom{justify-content:flex-start}.donate-menu small{font-size:11.5px;line-height:1.35}
 svg.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 /* Orca injects default button/input styles after this sheet (orca-plugin-defaults), so the base
    rules use "body …" to outrank them; otherwise buttons get Orca's white text and accent fill. */
@@ -2770,7 +2839,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
 <header class="appbar">
  <div class="brand"><div class="brand-mark"><svg><use href="#i-logo"/></svg></div><div><h1>PlatePilot</h1><small data-i18n="app.tagline">Model library and plate planner</small></div></div>
  <div id="printer" class="printer"><span class="name muted" data-i18n="app.loading_profile">Loading the printer profile…</span></div>
- <div class="appbar-actions"><button id="scan" class="primary"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="btn.refresh">Refresh</span></button><button id="addFiles" data-i18n-title="btn.add_files_tip" title="Add ZIP, STL, STEP or 3MF files"><svg class="ic"><use href="#i-file-plus"/></svg><span data-i18n="btn.add_files">Add files</span></button><input id="filePick" type="file" multiple accept=".zip,.stl,.step,.stp,.3mf" hidden><button id="support" data-i18n-title="btn.support_tip" title="Support PlatePilot with Telegram Stars"><svg class="ic-support" viewBox="0 0 24 24"><use href="#i-support"/></svg><span data-i18n="btn.support">Support</span></button><button id="openSettings"><svg class="ic"><use href="#i-sliders"/></svg><span data-i18n="btn.folders">Settings</span></button></div>
+ <div class="appbar-actions"><button id="scan" class="primary"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="btn.refresh">Refresh</span></button><button id="addFiles" data-i18n-title="btn.add_files_tip" title="Add ZIP, STL, STEP or 3MF files"><svg class="ic"><use href="#i-file-plus"/></svg><span data-i18n="btn.add_files">Add files</span></button><input id="filePick" type="file" multiple accept=".zip,.stl,.step,.stp,.3mf" hidden><div class="donate"><button id="support" aria-haspopup="menu" aria-expanded="false" data-i18n-title="btn.support_tip" title="Support PlatePilot with Telegram Stars"><svg class="ic-support" viewBox="0 0 24 24"><use href="#i-support"/></svg><span data-i18n="btn.support">Support</span></button><div id="donateMenu" class="donate-menu" role="menu" hidden><b data-i18n="donate.title">Support with Telegram Stars</b><div class="donate-amounts"><button role="menuitem" data-amount="50">50 ⭐</button><button role="menuitem" data-amount="100">100 ⭐</button><button role="menuitem" data-amount="250">250 ⭐</button><button role="menuitem" data-amount="500">500 ⭐</button></div><button role="menuitem" class="ghost donate-custom" data-amount="custom" data-i18n="donate.custom">Custom amount…</button><small class="muted" data-i18n="donate.note">Telegram opens the payment window. Voluntary — just a thank-you.</small></div></div><button id="openSettings"><svg class="ic"><use href="#i-sliders"/></svg><span data-i18n="btn.folders">Settings</span></button></div>
 </header>
 <div class="progress"></div>
 
@@ -3026,8 +3095,9 @@ function closeZoom(){$('zoom').hidden=true;S.zoom=null}
 function setMode(mode,save=true){S.mode=mode==='orca'?'orca':'own';document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===S.mode));const own=S.mode==='own';$('marginField').hidden=!own;$('platesField').hidden=!own;$('plan').hidden=!own;$('planSmart').hidden=!own;$('sendPrepare').hidden=!own;$('nativeArrange').hidden=own;$('orientField').hidden=own;$('modeNote').textContent=t(own?'mode.own_note':'mode.orca_note');if(!own)renderPlan(null);if(save)saveUiSettings()}
 
 /* wiring */
-$('openSettings').onclick=()=>openDrawer(true);$('support').onclick=()=>send('open_support');$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('modal').hidden)finishAsk(false);else openDrawer(false)}});
+$('openSettings').onclick=()=>openDrawer(true);$('support').onclick=e=>{e.stopPropagation();donateOpen($('donateMenu').hidden)};$('donateMenu').onclick=e=>{const b=e.target.closest('[data-amount]');if(!b)return;donateOpen(false);send('open_support',{amount:b.dataset.amount})};document.addEventListener('click',e=>{if(!e.target.closest('.donate'))donateOpen(false)});$('closeSettings').onclick=()=>openDrawer(false);$('scrim').onclick=()=>openDrawer(false);
+function donateOpen(v){$('donateMenu').hidden=!v;$('support').setAttribute('aria-expanded',String(v))}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('donateMenu').hidden)donateOpen(false);else if(!$('modal').hidden)finishAsk(false);else openDrawer(false)}});
 $('pickFolder').onclick=()=>{if(S.busy)return;S.scanning=true;status(t('st.opening_picker'));send('pick_folder',{initial:$('folder').value.trim()||(S.config.folders||[])[0]||''})};
 $('addFolder').onclick=()=>{const path=$('folder').value.trim();if(path&&!S.busy){S.scanning=true;setBusy(true);send('request_folder_add',{path})}};$('folder').onkeydown=e=>{if(e.key==='Enter')$('addFolder').click()};
 const pickFiles=()=>{if(!S.busy){openDrawer(false);$('filePick').value='';$('filePick').click()}};$('addFiles').onclick=pickFiles;$('addFiles2').onclick=pickFiles;
@@ -6004,12 +6074,13 @@ class PlatePilotPage(orca.pages.PagesPluginCapabilityBase):
                 if getattr(self, "_rows", None) is not None:
                     self._post_rows(config)
             elif kind == "open_support":
+                url = _donate_url(data.get("amount"))
                 try:
-                    opened = webbrowser.open_new_tab(SUPPORT_URL)
+                    opened = webbrowser.open_new_tab(url)
                 except Exception:
                     opened = False
                 if not opened:
-                    self.post_message({"type": "error", "message": _t("err.support_open", url=SUPPORT_URL)})
+                    self.post_message({"type": "error", "message": _t("err.support_open", url=url)})
             elif kind == "pick_folder":
                 initial = str(data.get("initial", "") or "")
                 try:

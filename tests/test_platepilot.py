@@ -1469,37 +1469,63 @@ if __name__ == "__main__":
 
 
 class Support(unittest.TestCase):
-    """The Support button opens the author's Telegram in the browser, or names it when it cannot."""
+    """Support opens a small menu; each amount opens the donation bot's invoice link in the
+    UI language. The page only sends an amount, the link comes from PlatePilot's own table."""
 
     def setUp(self):
         self.storage = tempfile.TemporaryDirectory()
         self.page = FakePage(self.storage.name)
         self.saved = pp.webbrowser.open_new_tab
+        self.opened = []
+        pp.webbrowser.open_new_tab = lambda url: self.opened.append(url) or True
 
     def tearDown(self):
         pp.webbrowser.open_new_tab = self.saved
+        pp._set_language("en")
         self.storage.cleanup()
 
-    def test_opens_the_link(self):
-        opened = []
-        pp.webbrowser.open_new_tab = lambda url: opened.append(url) or True
-        self.page.send({"type": "open_support"})
-        self.assertEqual(opened, ["https://t.me/GIMINOT"])
+    def test_preset_amount_opens_the_invoice_link_in_the_ui_language(self):
+        self.page.config_text = '{"language": "ru"}'
+        self.page.send({"type": "open_support", "amount": "100"})
+        self.page.config_text = '{"language": "ja"}'
+        self.page.send({"type": "open_support", "amount": 500})
+        self.assertEqual(self.opened, [pp.DONATE_LINKS["ru"][1], pp.DONATE_LINKS["ja"][3]])
         self.assertEqual(self.page.messages, [])
+
+    def test_custom_amount_and_plain_click_open_the_bot(self):
+        self.page.send({"type": "open_support", "amount": "custom"})
+        self.page.send({"type": "open_support"})
+        self.assertEqual(self.opened, ["https://t.me/GiminotDonateBot?start=c_platepilot",
+                                       "https://t.me/GiminotDonateBot?start=p_platepilot"])
+
+    def test_the_page_cannot_choose_the_link(self):
+        for forged in ["77", "https://example.com", None, "", "50.5", True, ["100"]]:
+            self.page.send({"type": "open_support", "amount": forged})
+        self.assertEqual(set(self.opened), {pp.SUPPORT_URL})
 
     def test_names_the_link_when_the_browser_does_not_open(self):
         def fail(url):
             raise OSError("no browser")
         pp.webbrowser.open_new_tab = fail
-        self.page.on_message({"type": "open_support"})
+        self.page.on_message({"type": "open_support", "amount": "50"})
         self.assertEqual(self.page.messages[-1]["type"], "error")
-        self.assertIn("https://t.me/GIMINOT", self.page.messages[-1]["message"])
+        self.assertIn(pp.DONATE_LINKS["en"][0], self.page.messages[-1]["message"])
 
-    def test_the_button_is_on_the_page_in_every_language(self):
+    def test_links_for_every_language(self):
+        self.assertEqual(set(pp.DONATE_LINKS), set(pp.LANGUAGES))
+        every = [url for links in pp.DONATE_LINKS.values() for url in links]
+        self.assertTrue(all(len(links) == len(pp.DONATE_AMOUNTS) for links in pp.DONATE_LINKS.values()))
+        self.assertTrue(all(url.startswith("https://t.me/$") for url in every))
+        self.assertEqual(len(set(every)), len(every))
+
+    def test_the_menu_is_on_the_page_in_every_language(self):
         self.assertIn('id="support"', pp.PAGE)
+        self.assertIn('id="donateMenu"', pp.PAGE)
         self.assertIn('<symbol id="i-support"', pp.PAGE)
+        for amount in [*pp.DONATE_AMOUNTS, "custom"]:
+            self.assertIn(f'data-amount="{amount}"', pp.PAGE)
         for language in pp.LANGUAGES:
             pp._set_language(language)
-            self.assertTrue(pp._t("btn.support"))
-            self.assertNotEqual(pp._t("btn.support"), "btn.support")
-        pp._set_language("en")
+            for key in ("btn.support", "btn.support_tip", "donate.title", "donate.custom", "donate.note"):
+                self.assertNotEqual(pp._t(key), key)
+            self.assertIn("{url}", pp._text("err.support_open"))

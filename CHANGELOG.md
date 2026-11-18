@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.4
+
+- **Support opens the payment window at once.** The **Support** button now opens a small menu: **50 / 100 / 250 / 500 ⭐** open Telegram's Stars payment window straight away, in PlatePilot's language (all ten), with no chat and no searching for a gift button; **Custom amount…** opens the author's donation bot @GiminotDonateBot, which asks for the amount. Escape or a click elsewhere closes the menu. The page only tells PlatePilot which amount was chosen; the links themselves are fixed in PlatePilot's code.
+
 ## 0.10.3
 
 - **Fixed: an archive of 3MF files vanished from the list after opening.** Its parts were read, but the model count was taken from the part names ("Steve.3mf · 1"), found no model files and hid the archive as empty, also after a restart. Archives are now counted by the files behind their parts; empty counts saved by older versions are not trusted, so such archives come back by themselves.

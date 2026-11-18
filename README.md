@@ -65,11 +65,11 @@ Slice again before printing, and check Orca's warnings for parts outside a plate
 
 ## Support the author
 
-PlatePilot is free. If it saves you time, the **Support** button at the top (a printed heart) opens the author's Telegram, [t.me/GIMINOT](https://t.me/GIMINOT), where you can send Telegram Stars: in the profile choose **Gift → Stars**. Ko-fi is coming later.
+PlatePilot is free. If it saves you time, the **Support** button at the top (a printed heart) opens a small menu: **50 / 100 / 250 / 500 ⭐** open the Telegram Stars payment window at once, in PlatePilot's language; **Custom amount…** opens the author's donation bot [@GiminotDonateBot](https://t.me/GiminotDonateBot?start=p_platepilot), which asks for the amount. It is voluntary and unlocks nothing: PlatePilot works the same with or without it. Ko-fi is coming later.
 
 ## Permissions and privacy
 
-PlatePilot works only with local files. It does not use the network. The **Support** button only asks your system to open its link in the browser.
+PlatePilot works only with local files. It does not use the network. The **Support** menu only asks your system to open a Telegram link in the browser; the links are fixed in PlatePilot's code.
 
 - OrcaSlicer asks before a plugin reads a file outside the plugin's own data folder, separately for every path. PlatePilot does not bypass these prompts, and it is built so that there are few of them:
   - Checking a watched folder only lists file names and sizes. Orca asks once per folder, the first time.
@@ -158,11 +158,11 @@ PlatePilot — плагин для [OrcaSlicer](https://github.com/OrcaSlicer/Or
 
 ## Поддержать автора
 
-PlatePilot бесплатный. Если он экономит вам время, кнопка **«Поддержать»** вверху (напечатанное сердце) откроет Telegram автора, [t.me/GIMINOT](https://t.me/GIMINOT), там можно отправить звёзды Telegram: в профиле выберите **«Подарить» → «Звёзды»**. Ko-fi появится позже.
+PlatePilot бесплатный. Если он экономит вам время, кнопка **«Поддержать»** вверху (напечатанное сердце) откроет маленькое меню: **50 / 100 / 250 / 500 ⭐** сразу открывают окно оплаты звёздами Telegram на языке PlatePilot, **«Своя сумма…»** открывает бота автора для пожертвований [@GiminotDonateBot](https://t.me/GiminotDonateBot?start=p_platepilot), он спросит сумму. Это добровольно и ничего не открывает: PlatePilot работает одинаково с поддержкой и без неё. Ko-fi появится позже.
 
 ## Доступ и приватность
 
-PlatePilot работает только с локальными файлами и не обращается к сети. Кнопка «Поддержать» только просит систему открыть ссылку в браузере. Orca спрашивает разрешение, прежде чем плагин прочитает файл вне своей папки данных, — отдельно для каждого пути. PlatePilot эти запросы не обходит, но устроен так, чтобы их было мало:
+PlatePilot работает только с локальными файлами и не обращается к сети. Меню «Поддержать» только просит систему открыть ссылку Telegram в браузере; ссылки зашиты в коде PlatePilot. Orca спрашивает разрешение, прежде чем плагин прочитает файл вне своей папки данных, — отдельно для каждого пути. PlatePilot эти запросы не обходит, но устроен так, чтобы их было мало:
 
 - Проверка отслеживаемой папки только перечисляет имена и размеры файлов — Orca спросит один раз на папку.
 - Архив читается, только когда вы его открываете, — один запрос на архив.
