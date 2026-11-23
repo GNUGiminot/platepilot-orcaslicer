@@ -4,7 +4,7 @@
 # name = "PlatePilot"
 # description = "Model library for STL bundles: preview parts on the active printer bed, arrange them on several plates and open the project in Prepare."
 # author = "GNUGiminot"
-# version = "0.10.4"
+# version = "0.10.5"
 # ///
 
 """PlatePilot: an OrcaSlicer plugin that browses STL bundles and sends arranged multi-plate projects to Prepare."""
@@ -31,7 +31,7 @@ import zipfile
 import orca
 
 
-VERSION = "0.10.4"
+VERSION = "0.10.5"
 # Support: the author's donation bot @GiminotDonateBot (Telegram Stars), project "platepilot".
 # The page only sends an amount; the link always comes from these tables.
 DONATE_BOT = "GiminotDonateBot"
@@ -157,8 +157,8 @@ STRINGS = {
     "unit.mm": ("mm", "мм"),
     "btn.plan": ("Calculate", "Рассчитать"),
     "btn.plan_smart": ("Smart layout", "Умная раскладка"),
-    "btn.plan_smart_tip": ("Beta: the parts of each plate are grouped in the middle, small ones nearest the centre, away from the bed edges and evenly spaced; the plates are filled evenly",
-                           "Бета: детали каждого стола собраны в центре, мелкие ближе к середине, подальше от краёв и с ровными зазорами; столы загружены поровну"),
+    "btn.plan_smart_tip": ("The parts of each plate are grouped in the middle, small ones nearest the centre, away from the bed edges and evenly spaced; the plates are filled evenly",
+                           "Детали каждого стола собраны в центре, мелкие ближе к середине, подальше от краёв и с ровными зазорами; столы загружены поровну"),
     "btn.send": ("Open in Prepare", "В «Подготовку»"),
     "btn.arrange": ("Arrange in Orca", "Расставить в Orca"),
     "mode.own_note": ("PlatePilot packs the parts by their footprint on the active printer's bed, shows the plates and opens the project in Prepare.",
@@ -267,7 +267,7 @@ STRINGS = {
     "plan.at_most": ("at most one plate per part", "не больше одного стола на деталь"),
     "plan.too_tall": ("taller than Z: {name}", "выше Z: {name}"),
     "plan.zones": ("check excluded areas in Orca", "проверьте исключённые зоны в Orca"),
-    "plan.smart": ("smart layout β", "умная раскладка β"),
+    "plan.smart": ("smart layout", "умная раскладка"),
     "plan.plate": ("Plate {n}", "Стол {n}"),
     "plan.view3d": ("3D", "3D"),
     "plan.view3d_all": ("Plates in 3D", "Столы в 3D"),
@@ -460,7 +460,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "Berechnen",
         "btn.plan_smart": "Smarte Anordnung",
-        "btn.plan_smart_tip": "Beta: Die Teile jeder Platte werden in der Mitte gruppiert, kleine am nächsten zur Mitte, weg von den Bettkanten und gleichmäßig verteilt; die Platten werden gleichmäßig gefüllt",
+        "btn.plan_smart_tip": "Die Teile jeder Platte werden in der Mitte gruppiert, kleine am nächsten zur Mitte, weg von den Bettkanten und gleichmäßig verteilt; die Platten werden gleichmäßig gefüllt",
         "btn.send": "In Vorbereiten öffnen",
         "btn.arrange": "In Orca anordnen",
         "mode.own_note": "PlatePilot packt die Teile nach ihrer Grundfläche auf das Bett des aktiven Druckers, zeigt die Platten und öffnet das Projekt in „Vorbereiten“.",
@@ -559,7 +559,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "höchstens eine Platte pro Teil",
         "plan.too_tall": "höher als Z: {name}",
         "plan.zones": "ausgeschlossene Bereiche in Orca prüfen",
-        "plan.smart": "smarte Anordnung β",
+        "plan.smart": "smarte Anordnung",
         "plan.plate": "Platte {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "Platten in 3D",
@@ -733,7 +733,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "Calculer",
         "btn.plan_smart": "Disposition intelligente",
-        "btn.plan_smart_tip": "Bêta : les pièces de chaque plaque sont regroupées au milieu, les petites au plus près du centre, loin des bords du plateau et espacées régulièrement ; les plaques sont remplies uniformément",
+        "btn.plan_smart_tip": "Les pièces de chaque plaque sont regroupées au milieu, les petites au plus près du centre, loin des bords du plateau et espacées régulièrement ; les plaques sont remplies uniformément",
         "btn.send": "Ouvrir dans Préparer",
         "btn.arrange": "Disposer dans Orca",
         "mode.own_note": "PlatePilot range les pièces selon leur emprise sur le plateau de l’imprimante active, montre les plaques et ouvre le projet dans « Préparer ».",
@@ -832,7 +832,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "au plus une plaque par pièce",
         "plan.too_tall": "plus haute que Z : {name}",
         "plan.zones": "vérifiez les zones exclues dans Orca",
-        "plan.smart": "disposition intelligente β",
+        "plan.smart": "disposition intelligente",
         "plan.plate": "Plaque {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "Plaques en 3D",
@@ -1006,7 +1006,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "Calcular",
         "btn.plan_smart": "Distribución inteligente",
-        "btn.plan_smart_tip": "Beta: las piezas de cada placa se agrupan en el centro, las pequeñas más cerca del centro, lejos de los bordes de la cama y con separación uniforme; las placas se llenan por igual",
+        "btn.plan_smart_tip": "Las piezas de cada placa se agrupan en el centro, las pequeñas más cerca del centro, lejos de los bordes de la cama y con separación uniforme; las placas se llenan por igual",
         "btn.send": "Abrir en Preparar",
         "btn.arrange": "Organizar en Orca",
         "mode.own_note": "PlatePilot coloca las piezas según su huella en la cama de la impresora activa, muestra las placas y abre el proyecto en «Preparar».",
@@ -1105,7 +1105,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "como mucho una placa por pieza",
         "plan.too_tall": "más alta que Z: {name}",
         "plan.zones": "revisa las zonas excluidas en Orca",
-        "plan.smart": "distribución inteligente β",
+        "plan.smart": "distribución inteligente",
         "plan.plate": "Placa {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "Placas en 3D",
@@ -1279,7 +1279,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "Calcular",
         "btn.plan_smart": "Layout inteligente",
-        "btn.plan_smart_tip": "Beta: as peças de cada placa ficam agrupadas no meio, as pequenas mais perto do centro, longe das bordas da mesa e com espaçamento uniforme; as placas são preenchidas por igual",
+        "btn.plan_smart_tip": "As peças de cada placa ficam agrupadas no meio, as pequenas mais perto do centro, longe das bordas da mesa e com espaçamento uniforme; as placas são preenchidas por igual",
         "btn.send": "Abrir em Preparar",
         "btn.arrange": "Organizar no Orca",
         "mode.own_note": "O PlatePilot arruma as peças pela área de apoio na mesa da impressora ativa, mostra as placas e abre o projeto em «Preparar».",
@@ -1378,7 +1378,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "no máximo uma placa por peça",
         "plan.too_tall": "mais alta que Z: {name}",
         "plan.zones": "confira as áreas excluídas no Orca",
-        "plan.smart": "layout inteligente β",
+        "plan.smart": "layout inteligente",
         "plan.plate": "Placa {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "Placas em 3D",
@@ -1552,7 +1552,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "Calcola",
         "btn.plan_smart": "Disposizione intelligente",
-        "btn.plan_smart_tip": "Beta: le parti di ogni piastra sono raggruppate al centro, le piccole più vicine al centro, lontano dai bordi del piatto e a distanza uniforme; le piastre vengono riempite in modo uniforme",
+        "btn.plan_smart_tip": "Le parti di ogni piastra sono raggruppate al centro, le piccole più vicine al centro, lontano dai bordi del piatto e a distanza uniforme; le piastre vengono riempite in modo uniforme",
         "btn.send": "Apri in Prepara",
         "btn.arrange": "Disponi in Orca",
         "mode.own_note": "PlatePilot sistema le parti in base all’ingombro sul piatto della stampante attiva, mostra le piastre e apre il progetto in «Prepara».",
@@ -1651,7 +1651,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "al massimo una piastra per parte",
         "plan.too_tall": "più alta di Z: {name}",
         "plan.zones": "controlla le aree escluse in Orca",
-        "plan.smart": "disposizione intelligente β",
+        "plan.smart": "disposizione intelligente",
         "plan.plate": "Piastra {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "Piastre in 3D",
@@ -1825,7 +1825,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "Hesapla",
         "btn.plan_smart": "Akıllı yerleşim",
-        "btn.plan_smart_tip": "Beta: her plakanın parçaları ortada toplanır, küçükler merkeze en yakın, yatak kenarlarından uzak ve eşit aralıklı; plakalar eşit doldurulur",
+        "btn.plan_smart_tip": "Her plakanın parçaları ortada toplanır, küçükler merkeze en yakın, yatak kenarlarından uzak ve eşit aralıklı; plakalar eşit doldurulur",
         "btn.send": "Hazırlık'ta aç",
         "btn.arrange": "Orca'da hizala",
         "mode.own_note": "PlatePilot parçaları etkin yazıcının yatağında taban alanlarına göre yerleştirir, plakaları gösterir ve projeyi \"Hazırlık\" sekmesinde açar.",
@@ -1924,7 +1924,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "parça başına en fazla bir plaka",
         "plan.too_tall": "Z'den yüksek: {name}",
         "plan.zones": "Orca'da hariç tutulan alanları kontrol edin",
-        "plan.smart": "akıllı yerleşim β",
+        "plan.smart": "akıllı yerleşim",
         "plan.plate": "Plaka {n}",
         "plan.view3d": "3B",
         "plan.view3d_all": "Plakalar 3B",
@@ -2098,7 +2098,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "計算",
         "btn.plan_smart": "スマート配置",
-        "btn.plan_smart_tip": "ベータ：各プレートのパーツを中央に集め、小さいものほど中心寄り、ベッドの端から離して均等な間隔にします。プレートは均等に埋めます",
+        "btn.plan_smart_tip": "各プレートのパーツを中央に集め、小さいものほど中心寄り、ベッドの端から離して均等な間隔にします。プレートは均等に埋めます",
         "btn.send": "準備で開く",
         "btn.arrange": "Orca でレイアウト",
         "mode.own_note": "PlatePilot はアクティブなプリンターのベッド上にパーツを底面の大きさで並べ、プレートを表示し、プロジェクトを「準備」で開きます。",
@@ -2197,7 +2197,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "パーツ 1 個につきプレートは最大 1 枚",
         "plan.too_tall": "Z より高い：{name}",
         "plan.zones": "Orca で除外領域を確認してください",
-        "plan.smart": "スマート配置 β",
+        "plan.smart": "スマート配置",
         "plan.plate": "プレート {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "プレートを 3D で",
@@ -2371,7 +2371,7 @@ EXTRA_STRINGS = {
         "unit.mm": "mm",
         "btn.plan": "计算",
         "btn.plan_smart": "智能排布",
-        "btn.plan_smart_tip": "测试版：每个盘的零件集中在中间，小零件最靠近中心，远离热床边缘且间距均匀；各盘装填均匀",
+        "btn.plan_smart_tip": "每个盘的零件集中在中间，小零件最靠近中心，远离热床边缘且间距均匀；各盘装填均匀",
         "btn.send": "在“准备”中打开",
         "btn.arrange": "在 Orca 中摆放",
         "mode.own_note": "PlatePilot 按占地面积把零件排在当前打印机的热床上，显示各个盘，并在“准备”中打开项目。",
@@ -2470,7 +2470,7 @@ EXTRA_STRINGS = {
         "plan.at_most": "每个零件最多一个盘",
         "plan.too_tall": "高于 Z：{name}",
         "plan.zones": "请在 Orca 中检查禁用区域",
-        "plan.smart": "智能排布 β",
+        "plan.smart": "智能排布",
         "plan.plate": "盘 {n}",
         "plan.view3d": "3D",
         "plan.view3d_all": "3D 查看各盘",
@@ -2696,7 +2696,7 @@ button:active:not(:disabled){transform:translateY(1px)}button:disabled{opacity:.
 button.primary{background:var(--accent);border-color:transparent;color:var(--accent-fg);box-shadow:0 6px 16px -8px color-mix(in srgb,var(--accent) 80%,transparent)}
 button.primary:hover:not(:disabled){background:color-mix(in srgb,#fff 10%,var(--accent))}
 button.ghost{background:transparent;border-color:transparent;color:var(--muted)}button.ghost:hover:not(:disabled){color:var(--fg);background:var(--surface-2);border-color:transparent}
-button.icon{width:32px;padding:0}.beta{font-size:10.5px;font-weight:700;line-height:16px;padding:0 5px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+button.icon{width:32px;padding:0}
 body input,body select{font:inherit;color:var(--fg);background:var(--raised);border:1px solid var(--line);border-radius:var(--r-sm);height:32px;padding:0 10px;min-width:0}
 body input:focus,body select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 input[type=number]{width:76px}
@@ -2875,7 +2875,7 @@ body button.more{width:calc(100% - 4px);margin:10px 2px 4px;justify-content:flex
     <label class="field" id="platesField" data-i18n-title="mode.plates_tip" title="How many plates"><span data-i18n="mode.plates">Plates</span> <input id="plateCount" type="number" min="1" max="50" step="1" data-i18n-ph="mode.plates_auto" placeholder="auto"></label>
     <span class="spacer"></span>
     <button id="plan"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="btn.plan">Calculate</span></button>
-    <button id="planSmart" data-i18n-title="btn.plan_smart_tip" title="Beta: parts grouped in the middle of each plate"><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.plan_smart">Smart layout</span><span class="beta">β</span></button>
+    <button id="planSmart" data-i18n-title="btn.plan_smart_tip" title="Parts grouped in the middle of each plate"><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.plan_smart">Smart layout</span></button>
     <button id="sendPrepare" class="primary" disabled><svg class="ic"><use href="#i-send"/></svg><span data-i18n="btn.send">Open in Prepare</span></button>
     <label class="field" id="orientField" data-i18n-title="mode.orient_tip" title="Orca auto-orient" hidden><input id="orcaOrient" type="checkbox"> <span data-i18n="mode.orient">Turn parts (Orca auto-orient)</span></label>
     <button id="nativeArrange" class="primary" hidden><svg class="ic"><use href="#i-wand"/></svg><span data-i18n="btn.arrange">Arrange in Orca</span></button>
@@ -4831,7 +4831,7 @@ def _smart_plate(items, bed_x, bed_y, margin):
 
 
 def _pack_smart(parts, bed_x, bed_y, margin, wanted=0):
-    """Smart layout (beta): as many plates as _pack needs, with the parts of each plate in a
+    """Smart layout: as many plates as _pack needs, with the parts of each plate in a
     centred group, small parts nearer the middle, away from the bed sides, evenly spaced, and
     the plates filled about evenly. A plate too full for that gets _pack's dense layout, moved to
     the middle. The result has the same form as _pack's, plus "smart": True, or "fallback" when

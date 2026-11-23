@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.5
+
+- Removed the beta label from **Smart layout**: the button, its tooltip and the layout summary now use the regular name in all ten languages. The layout algorithm is unchanged.
+
 ## 0.10.4
 
 - **Support opens the payment window at once.** The **Support** button now opens a small menu: **50 / 100 / 250 / 500 ⭐** open Telegram's Stars payment window straight away, in PlatePilot's language (all ten), with no chat and no searching for a gift button; **Custom amount…** opens the author's donation bot @GiminotDonateBot, which asks for the amount. Escape or a click elsewhere closes the menu. The page only tells PlatePilot which amount was chosen; the links themselves are fixed in PlatePilot's code.
